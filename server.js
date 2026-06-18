@@ -199,7 +199,9 @@ app.post('/api/unit-costs', async (req, res) => {
   const result = run(
     `INSERT INTO unit_costs (name, division, output_unit, created_by, misc_bond_pct, escalation_pct, markup_pct, calc_scratch, comments)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [name, division, output_unit, created_by, misc_bond_pct || 0, escalation_pct || 0, markup_pct || 0, calc_scratch || null, comments || null]
+    [name, division, output_unit, created_by,
+     misc_bond_pct ?? 5, escalation_pct ?? 3, markup_pct ?? 15,
+     calc_scratch || null, comments || null]
   );
   const id = result.lastInsertRowid;
 

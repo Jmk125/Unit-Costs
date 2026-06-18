@@ -202,6 +202,13 @@
   .fp-opt .fp-val { font-family: var(--mono); color: var(--green); font-size: 11px; white-space: nowrap; }
   .fp-opt .fp-tok { font-family: var(--mono); color: var(--accent); font-size: 11px; }
   .fp-empty { padding: 10px; color: var(--text-dim); font-size: 11px; }
+
+  /* ── MATERIAL LINE LABEL ── */
+  .mp-label { flex: 1; font-size: 12px; cursor: pointer; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mp-label.set { color: #fff; font-weight: 700; }
+  .mat-picker-footer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
+  .mat-picker-footer .btn { flex: 1; justify-content: center; }
+  .mat-browser-list { max-height: 50vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -677,8 +684,8 @@ function renderUnitDetail() {
       <td class="row-num">${i+1}</td>
       <td class="mat-picker" id="mp-cell-${i}">
         <div style="display:flex;align-items:center;gap:4px">
-          <span id="mp-label-${i}" style="flex:1;font-size:12px;cursor:pointer;color:${line.material_id?'var(--text)':'var(--text-dim)'}" onclick="openMatPicker(${i})">${line.description || line.master_name || '<span style=color:var(--text-dim)>Click to select...</span>'}</span>
-          ${line.material_id ? `<button class="btn-icon" style="font-size:10px" onclick="clearMatLine(${i})">✕</button>` : ''}
+          <span id="mp-label-${i}" class="mp-label ${(line.description || line.master_name) ? 'set' : ''}" onclick="openMatPicker(${i})">${line.description || line.master_name || 'Click to select...'}</span>
+          ${(line.description || line.master_name) ? `<button class="btn-icon mat-clear-btn" style="font-size:10px" onclick="clearMatLine(${i})">✕</button>` : ''}
         </div>
       </td>
       <td><input type="text" id="ml-unit-${i}" value="${line.purchase_unit||''}" style="width:60px;color:var(--text-muted)"></td>
@@ -762,7 +769,7 @@ rebar_tons = wall_sf * 0.004
             <th style="min-width:220px">Material / Component</th>
             <th>Unit</th>
             <th style="text-align:right">Price/Unit</th>
-            <th style="text-align:center;width:60px">Mltp.</th>
+            <th style="text-align:center;width:70px">Waste MLTP.</th>
             <th>Qty / Formula</th>
             <th style="text-align:right">Extended</th>
           </tr></thead>
@@ -874,7 +881,11 @@ function openMatPicker(rowIdx) {
   dropdown.id = 'mat-picker-dropdown';
   dropdown.innerHTML = `
     <div class="mat-picker-search"><input id="mat-search" placeholder="Search materials..." autofocus oninput="filterMatOptions(this.value)"></div>
-    <div id="mat-options"></div>`;
+    <div id="mat-options"></div>
+    <div class="mat-picker-footer">
+      <button class="btn btn-secondary btn-sm" onmousedown="event.preventDefault()" onclick="showMatBrowser()">Browse Full List</button>
+      <button class="btn btn-secondary btn-sm" onmousedown="event.preventDefault()" onclick="showOneOffModal()">+ One-Time Item</button>
+    </div>`;
   cell.appendChild(dropdown);
   renderMatOptions('');
   setTimeout(() => document.getElementById('mat-search').focus(), 50);
@@ -905,36 +916,127 @@ function closeMatPicker(e) {
   if (dd && !dd.contains(e.target)) dd.remove();
 }
 
-function selectMatForLine(matId) {
-  const mat = state.materials.find(m => m.id === matId);
-  if (!mat || activePickerRow === null) return;
-  const i = activePickerRow;
-  document.getElementById(`mp-label-${i}`).innerHTML = mat.item_name;
-  document.getElementById(`ml-unit-${i}`).value = mat.purchase_unit;
-  document.getElementById(`ml-price-${i}`).value = mat.cost_per_unit;
-  document.getElementById(`ml-matid-${i}`).textContent = mat.id;
-  document.getElementById(`ml-snap-${i}`).textContent = mat.cost_per_unit;
-  document.getElementById(`ml-price-${i}`).classList.remove('price-stale');
-  // Add clear button
+// Apply a chosen material (master or one-off) to a line.
+function applyLineMaterial(i, { name, unit, price, materialId = null, snapshot = null }) {
   const label = document.getElementById(`mp-label-${i}`);
-  if (label.parentElement.querySelector('.mat-clear-btn')) return;
-  const clearBtn = document.createElement('button');
-  clearBtn.className = 'btn-icon';
-  clearBtn.style.fontSize = '10px';
-  clearBtn.textContent = '✕';
-  clearBtn.onclick = () => clearMatLine(i);
-  label.parentElement.appendChild(clearBtn);
-  document.getElementById('mat-picker-dropdown').remove();
+  if (!label) return;
+  label.textContent = name;
+  label.classList.add('set');
+  document.getElementById(`ml-unit-${i}`).value = unit || '';
+  document.getElementById(`ml-price-${i}`).value = (price === null || price === undefined || price === '') ? '' : price;
+  document.getElementById(`ml-matid-${i}`).textContent = materialId || '';
+  document.getElementById(`ml-snap-${i}`).textContent = (snapshot === null || snapshot === undefined) ? '' : snapshot;
+  document.getElementById(`ml-price-${i}`).classList.remove('price-stale');
+  // Ensure a single clear button exists
+  const wrap = label.parentElement;
+  if (!wrap.querySelector('.mat-clear-btn')) {
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn-icon mat-clear-btn';
+    clearBtn.style.fontSize = '10px';
+    clearBtn.textContent = '✕';
+    clearBtn.onclick = () => clearMatLine(i);
+    wrap.appendChild(clearBtn);
+  }
   recalcAllMatLines();
 }
 
+function selectMatForLine(matId) {
+  const mat = state.materials.find(m => m.id === matId);
+  if (!mat || activePickerRow === null) return;
+  applyLineMaterial(activePickerRow, {
+    name: mat.item_name, unit: mat.purchase_unit,
+    price: mat.cost_per_unit, materialId: mat.id, snapshot: mat.cost_per_unit
+  });
+  const dd = document.getElementById('mat-picker-dropdown');
+  if (dd) dd.remove();
+}
+
 function clearMatLine(i) {
-  document.getElementById(`mp-label-${i}`).innerHTML = '<span style="color:var(--text-dim)">Click to select...</span>';
+  const label = document.getElementById(`mp-label-${i}`);
+  label.textContent = 'Click to select...';
+  label.classList.remove('set');
+  const btn = label.parentElement.querySelector('.mat-clear-btn');
+  if (btn) btn.remove();
   document.getElementById(`ml-unit-${i}`).value = '';
   document.getElementById(`ml-price-${i}`).value = '';
   document.getElementById(`ml-matid-${i}`).textContent = '';
   document.getElementById(`ml-snap-${i}`).textContent = '';
   recalcAllMatLines();
+}
+
+// ── Full-list browser (modal) ──
+function showMatBrowser(rowIdx) {
+  if (rowIdx !== undefined) activePickerRow = rowIdx;
+  const dd = document.getElementById('mat-picker-dropdown');
+  if (dd) dd.remove();
+  showModal(`<div class="modal-title">Select Material — Line ${activePickerRow + 1}</div>
+    <input id="mat-browser-search" placeholder="Search all materials by name or division..."
+      oninput="renderMatBrowserList(this.value)"
+      style="width:100%;background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:5px;font-size:13px">
+    <div class="mat-browser-list" id="mat-browser-list"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" style="margin-right:auto" onclick="showOneOffModal()">+ One-Time Item</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    </div>`);
+  renderMatBrowserList('');
+  setTimeout(() => document.getElementById('mat-browser-search')?.focus(), 50);
+}
+
+function renderMatBrowserList(filter) {
+  const el = document.getElementById('mat-browser-list');
+  if (!el) return;
+  const f = (filter || '').toLowerCase();
+  const mats = state.materials.filter(m =>
+    !f || m.item_name.toLowerCase().includes(f) || String(m.division).includes(f));
+  const divLabel = (num) => { const d = state.divisions.find(d => d.num == num); return d ? d.label : `Div ${num}`; };
+  const grouped = {};
+  mats.forEach(m => { (grouped[m.division] = grouped[m.division] || []).push(m); });
+  let html = '';
+  Object.keys(grouped).sort((a, b) => a - b).forEach(div => {
+    html += `<div class="fp-section">${divLabel(div)}</div>`;
+    grouped[div].forEach(m => {
+      html += `<div class="mat-option" onclick="selectMatFromBrowser(${m.id})">
+        <div class="mat-opt-name">${m.item_name}</div>
+        <div class="mat-opt-meta"><span>${m.purchase_unit}</span><span style="color:var(--green)">$${parseFloat(m.cost_per_unit).toFixed(2)}</span></div>
+      </div>`;
+    });
+  });
+  el.innerHTML = html || '<div class="fp-empty">No materials match.</div>';
+}
+
+function selectMatFromBrowser(matId) {
+  selectMatForLine(matId);
+  closeModal();
+}
+
+// ── One-time (non-master) item ──
+function showOneOffModal(rowIdx) {
+  if (rowIdx !== undefined) activePickerRow = rowIdx;
+  const dd = document.getElementById('mat-picker-dropdown');
+  if (dd) dd.remove();
+  const unitOptions = UNITS.map(u => `<option>${u}</option>`).join('');
+  showModal(`<div class="modal-title">Add One-Time Item — Line ${activePickerRow + 1}</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">A one-off line not linked to the master list — it won't be price-tracked.</div>
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1"><label>Item Name</label><input id="oo-name" placeholder="e.g. Custom steel bracket"></div>
+      <div class="form-group"><label>Unit</label><select id="oo-unit"><option value="">Select...</option>${unitOptions}</select></div>
+      <div class="form-group"><label>Price / Unit ($)</label><input id="oo-price" type="number" step="0.01"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveOneOffItem()">Add Item</button>
+    </div>`);
+  setTimeout(() => document.getElementById('oo-name')?.focus(), 50);
+}
+
+function saveOneOffItem() {
+  if (activePickerRow === null) return;
+  const name = document.getElementById('oo-name').value.trim();
+  if (!name) return alert('Item name required.');
+  const unit = document.getElementById('oo-unit').value;
+  const price = parseFloat(document.getElementById('oo-price').value) || 0;
+  applyLineMaterial(activePickerRow, { name, unit, price, materialId: null, snapshot: null });
+  closeModal();
 }
 
 // ════════════════════════════════════════════════════════════

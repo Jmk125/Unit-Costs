@@ -92,9 +92,9 @@ function initSchema(db) {
       created_by TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
-      misc_bond_pct REAL DEFAULT 0,
-      escalation_pct REAL DEFAULT 0,
-      markup_pct REAL DEFAULT 0,
+      misc_bond_pct REAL DEFAULT 5,
+      escalation_pct REAL DEFAULT 3,
+      markup_pct REAL DEFAULT 15,
       calc_scratch TEXT,
       comments TEXT,
       status TEXT DEFAULT 'draft'
