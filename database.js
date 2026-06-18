@@ -135,6 +135,9 @@ function initSchema(db) {
     )
   `);
 
+  // ── Migrations for columns added after initial release ──
+  ensureColumn(db, 'unit_costs', 'output_quantity', 'TEXT');
+
   db.run(`
     CREATE TABLE IF NOT EXISTS unit_cost_publications (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,6 +152,15 @@ function initSchema(db) {
       FOREIGN KEY (unit_cost_id) REFERENCES unit_costs(id)
     )
   `);
+}
+
+// Add a column to an existing table if it isn't already present.
+function ensureColumn(db, table, column, decl) {
+  const res = db.exec(`PRAGMA table_info(${table})`);
+  const existing = res.length ? res[0].values.map(r => r[1]) : [];
+  if (!existing.includes(column)) {
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+  }
 }
 
 function query(sql, params = []) {

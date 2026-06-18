@@ -195,13 +195,13 @@ app.get('/api/unit-costs/:id', async (req, res) => {
 
 app.post('/api/unit-costs', async (req, res) => {
   await getDb();
-  const { name, division, output_unit, created_by, misc_bond_pct, escalation_pct, markup_pct, calc_scratch, comments } = req.body;
+  const { name, division, output_unit, created_by, misc_bond_pct, escalation_pct, markup_pct, calc_scratch, comments, output_quantity } = req.body;
   const result = run(
-    `INSERT INTO unit_costs (name, division, output_unit, created_by, misc_bond_pct, escalation_pct, markup_pct, calc_scratch, comments)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO unit_costs (name, division, output_unit, created_by, misc_bond_pct, escalation_pct, markup_pct, calc_scratch, comments, output_quantity)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [name, division, output_unit, created_by,
      misc_bond_pct ?? 5, escalation_pct ?? 3, markup_pct ?? 15,
-     calc_scratch || null, comments || null]
+     calc_scratch || null, comments || null, output_quantity || null]
   );
   const id = result.lastInsertRowid;
 
@@ -218,11 +218,11 @@ app.post('/api/unit-costs', async (req, res) => {
 
 app.put('/api/unit-costs/:id', async (req, res) => {
   await getDb();
-  const { name, division, output_unit, misc_bond_pct, escalation_pct, markup_pct, calc_scratch, comments } = req.body;
+  const { name, division, output_unit, misc_bond_pct, escalation_pct, markup_pct, calc_scratch, comments, output_quantity } = req.body;
   run(
     `UPDATE unit_costs SET name=?, division=?, output_unit=?, misc_bond_pct=?, escalation_pct=?,
-     markup_pct=?, calc_scratch=?, comments=?, updated_at=datetime('now') WHERE id=?`,
-    [name, division, output_unit, misc_bond_pct || 0, escalation_pct || 0, markup_pct || 0, calc_scratch || null, comments || null, req.params.id]
+     markup_pct=?, calc_scratch=?, comments=?, output_quantity=?, updated_at=datetime('now') WHERE id=?`,
+    [name, division, output_unit, misc_bond_pct || 0, escalation_pct || 0, markup_pct || 0, calc_scratch || null, comments || null, output_quantity || null, req.params.id]
   );
   res.json({ success: true });
 });
