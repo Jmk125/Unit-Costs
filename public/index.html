@@ -352,8 +352,10 @@ function renderSidebar(filter = '') {
       const stale = state.tab === 'units' && item.stale_count > 0;
       html += `<div class="sidebar-item ${isActive ? 'active' : ''}" onclick="${state.tab === 'units' ? `selectUnit(${item.id})` : `selectDivisionMaterial(${div.num})`}">
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
-        ${stale ? '<span class="stale-dot" title="Material prices updated"></span>' : ''}
-        ${item.status === 'published' ? '<span style="width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0;margin-left:auto"></span>' : ''}
+        <span style="margin-left:auto;display:flex;align-items:center;gap:5px;flex-shrink:0">
+          ${stale ? `<span title="${item.stale_count} material price(s) updated — open to refresh" style="font-size:11px;line-height:1">⚠️</span>` : ''}
+          ${item.status === 'published' ? '<span title="Published" style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>' : ''}
+        </span>
       </div>`;
     });
   });
@@ -648,7 +650,7 @@ function renderUnitsView() {
       grouped[div].forEach(u => {
         html += `<tr style="cursor:pointer" onclick="selectUnit(${u.id})">
           <td><span class="badge badge-div">${u.division}</span></td>
-          <td><strong>${u.name}</strong></td>
+          <td><strong>${u.name}</strong>${u.stale_count > 0 ? ` <span title="${u.stale_count} material price(s) updated — open and refresh" style="cursor:help">⚠️</span>` : ''}</td>
           <td><code style="color:var(--text-muted)">${u.output_unit}</code></td>
           <td class="num" style="text-align:right;color:var(--green)">${u.last_published_cost ? '$'+parseFloat(u.last_published_cost).toFixed(2) : '—'}</td>
           <td><span class="badge badge-${u.status}">${u.status}</span></td>
@@ -689,7 +691,7 @@ function renderUnitDetail() {
         </div>
       </td>
       <td><input type="text" id="ml-unit-${i}" value="${line.purchase_unit||''}" style="width:60px;color:var(--text-muted)"></td>
-      <td><input type="number" id="ml-price-${i}" step="0.01" value="${line.price_per_unit||''}" class="${stalePriceClass}" style="width:80px;text-align:right" oninput="recalcAllMatLines()"></td>
+      <td><input type="number" id="ml-price-${i}" step="0.01" value="${line.price_per_unit||''}" class="${stalePriceClass}" style="width:80px;text-align:right" oninput="recalcAllMatLines()" onchange="maybePromptMasterUpdate(${i})"></td>
       <td><input type="number" id="ml-mltp-${i}" step="0.01" value="${line.multiplier||1.1}" style="width:55px;text-align:center" oninput="recalcAllMatLines()"></td>
       <td style="position:relative" id="qty-cell-${i}">
         <div style="display:flex;align-items:center;gap:2px">
@@ -977,6 +979,65 @@ function clearMatLine(i) {
   document.getElementById(`ml-matid-${i}`).textContent = '';
   document.getElementById(`ml-snap-${i}`).textContent = '';
   recalcAllMatLines();
+}
+
+// ── Prompt to push an edited line price back to the master list ──
+function maybePromptMasterUpdate(i) {
+  const matIdText = document.getElementById(`ml-matid-${i}`)?.textContent?.trim();
+  if (!matIdText) return;                       // one-off / unlinked line — nothing to update
+  const matId = parseInt(matIdText, 10);
+  const mat = state.materials.find(m => m.id === matId);
+  if (!mat) return;
+  const newPrice = parseFloat(document.getElementById(`ml-price-${i}`)?.value);
+  if (isNaN(newPrice)) return;
+  // Only prompt if it actually differs from the current master price (to the cent)
+  if (Math.round(newPrice * 100) === Math.round(parseFloat(mat.cost_per_unit) * 100)) return;
+  showMasterUpdateModal(i, matId, newPrice);
+}
+
+function showMasterUpdateModal(i, matId, newPrice) {
+  const mat = state.materials.find(m => m.id === matId);
+  if (!mat) return;
+  const today = new Date().toISOString().split('T')[0];
+  showModal(`<div class="modal-title">Update Master Price?</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">You changed the price for <strong style="color:var(--text)">${mat.item_name}</strong> on this line.</div>
+    <div style="display:flex;gap:16px;margin-bottom:14px;align-items:center">
+      <div><span style="color:var(--text-muted);font-size:11px">MASTER PRICE</span><br><span style="font-family:var(--mono);font-size:15px">$${parseFloat(mat.cost_per_unit).toFixed(2)} / ${mat.purchase_unit}</span></div>
+      <div style="font-size:18px;color:var(--text-dim)">→</div>
+      <div><span style="color:var(--text-muted);font-size:11px">NEW PRICE</span><br><span style="font-family:var(--mono);font-size:15px;color:var(--green)">$${newPrice.toFixed(2)} / ${mat.purchase_unit}</span></div>
+    </div>
+    <div style="font-size:11px;color:var(--amber);margin-bottom:12px">⚠️ Updating the master list archives the old price to history and affects all unit costs that use this material.</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Date Updated</label><input id="mu-date" type="date" value="${today}"></div>
+      <div class="form-group"><label>Updated By</label><input id="mu-by" value="JK"></div>
+      <div class="form-group" style="grid-column:1/-1"><label>Comments / Notes</label><textarea id="mu-comments" placeholder="e.g. New quote from White Cap">${mat.comments||''}</textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Keep line price only</button>
+      <button class="btn btn-primary" onclick="confirmMasterUpdate(${i}, ${matId}, ${newPrice})">Update Master List</button>
+    </div>`);
+}
+
+async function confirmMasterUpdate(i, matId, newPrice) {
+  const mat = state.materials.find(m => m.id === matId);
+  if (!mat) return closeModal();
+  const body = {
+    division: mat.division,
+    item_name: mat.item_name,
+    purchase_unit: mat.purchase_unit,
+    cost_per_unit: newPrice,
+    date_updated: document.getElementById('mu-date').value,
+    updated_by: document.getElementById('mu-by').value.trim() || 'JK',
+    comments: document.getElementById('mu-comments').value.trim(),
+  };
+  await api(`/api/materials/${matId}`, { method: 'PUT', body: JSON.stringify(body) });
+  closeModal();
+  await loadMaterials();
+  // This line now matches the master price → mark it fresh
+  document.getElementById(`ml-snap-${i}`).textContent = newPrice;
+  document.getElementById(`ml-price-${i}`).classList.remove('price-stale');
+  recalcAllMatLines();
+  alert('Master price updated ✓');
 }
 
 // ── Full-list browser (modal) ──

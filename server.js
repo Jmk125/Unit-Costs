@@ -146,16 +146,15 @@ app.delete('/api/backup-files/:id', async (req, res) => {
 app.get('/api/unit-costs', async (req, res) => {
   await getDb();
   const { division } = req.query;
-  let sql = `SELECT uc.*,
+  const cols = `uc.*,
     (SELECT cost_per_unit FROM unit_cost_publications WHERE unit_cost_id = uc.id ORDER BY published_at DESC LIMIT 1) as last_published_cost,
-    (SELECT published_at FROM unit_cost_publications WHERE unit_cost_id = uc.id ORDER BY published_at DESC LIMIT 1) as last_published_at
-    FROM unit_costs uc ORDER BY uc.division, uc.name`;
+    (SELECT published_at FROM unit_cost_publications WHERE unit_cost_id = uc.id ORDER BY published_at DESC LIMIT 1) as last_published_at,
+    (SELECT COUNT(*) FROM unit_cost_material_lines ucml JOIN materials m ON m.id = ucml.material_id
+      WHERE ucml.unit_cost_id = uc.id AND ucml.price_snapshot IS NOT NULL AND ucml.price_snapshot <> m.cost_per_unit) as stale_count`;
+  let sql = `SELECT ${cols} FROM unit_costs uc ORDER BY uc.division, uc.name`;
   let params = [];
   if (division) {
-    sql = `SELECT uc.*,
-      (SELECT cost_per_unit FROM unit_cost_publications WHERE unit_cost_id = uc.id ORDER BY published_at DESC LIMIT 1) as last_published_cost,
-      (SELECT published_at FROM unit_cost_publications WHERE unit_cost_id = uc.id ORDER BY published_at DESC LIMIT 1) as last_published_at
-      FROM unit_costs uc WHERE uc.division = ? ORDER BY uc.name`;
+    sql = `SELECT ${cols} FROM unit_costs uc WHERE uc.division = ? ORDER BY uc.name`;
     params = [division];
   }
   res.json(query(sql, params));
