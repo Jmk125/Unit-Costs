@@ -185,6 +185,23 @@
   .file-list-item a:hover { text-decoration: underline; }
   .tag-div { font-size: 10px; background: var(--surface3); color: var(--text-muted); padding: 1px 5px; border-radius: 3px; }
   select option { background: var(--surface); }
+
+  /* ── NO SPINNERS — type values directly ── */
+  input[type=number]::-webkit-outer-spin-button,
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+  /* ── QTY FORMULA CELL ── */
+  .data-table input.has-formula { color: var(--accent); font-weight: 600; cursor: pointer; }
+  .fx-btn { font-size: 10px; color: var(--text-muted); padding: 2px 5px; border-radius: 3px; line-height: 1; flex-shrink: 0; }
+  .fx-btn:hover { color: var(--accent); background: var(--surface3); }
+  .formula-picker { position: absolute; top: 100%; left: 0; width: 300px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; z-index: 60; max-height: 300px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+  .formula-picker .fp-section { padding: 6px 10px; font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; background: var(--surface2); }
+  .fp-opt { padding: 7px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .fp-opt:hover { background: var(--row-hover); }
+  .fp-opt .fp-val { font-family: var(--mono); color: var(--green); font-size: 11px; white-space: nowrap; }
+  .fp-opt .fp-tok { font-family: var(--mono); color: var(--accent); font-size: 11px; }
+  .fp-empty { padding: 10px; color: var(--text-dim); font-size: 11px; }
 </style>
 </head>
 <body>
@@ -230,6 +247,7 @@ let state = {
   activeUnitId: null,
   activeUnit: null,
   calcVars: {},
+  formulaVars: {},
 };
 
 const UNITS = ['SF','SY','LF','EA','CY','CW','CF','Ton','Roll','Box','CTN','LB','LS','SQ','MBF'];
@@ -664,10 +682,13 @@ function renderUnitDetail() {
         </div>
       </td>
       <td><input type="text" id="ml-unit-${i}" value="${line.purchase_unit||''}" style="width:60px;color:var(--text-muted)"></td>
-      <td><input type="number" id="ml-price-${i}" step="0.01" value="${line.price_per_unit||''}" class="${stalePriceClass}" style="width:80px;text-align:right" oninput="recalcMatLine(${i})"></td>
-      <td><input type="number" id="ml-mltp-${i}" step="0.01" value="${line.multiplier||1}" style="width:55px;text-align:center" oninput="recalcMatLine(${i})"></td>
-      <td>
-        <input type="text" id="ml-qtyf-${i}" value="${line.quantity_formula||''}" placeholder="qty or =formula" style="width:120px;font-family:var(--mono);font-size:11px" onchange="evalMatQty(${i})" title="Use a number or reference a calc variable like =rebar_tons">
+      <td><input type="number" id="ml-price-${i}" step="0.01" value="${line.price_per_unit||''}" class="${stalePriceClass}" style="width:80px;text-align:right" oninput="recalcAllMatLines()"></td>
+      <td><input type="number" id="ml-mltp-${i}" step="0.01" value="${line.multiplier||1}" style="width:55px;text-align:center" oninput="recalcAllMatLines()"></td>
+      <td style="position:relative" id="qty-cell-${i}">
+        <div style="display:flex;align-items:center;gap:2px">
+          <input type="text" id="ml-qtyf-${i}" value="${line.quantity_formula||''}" placeholder="qty or =formula" style="width:108px;font-family:var(--mono);font-size:11px" onfocus="qtyFocus(${i})" onblur="qtyBlur(${i})" title="Type a number, or =formula referencing calc vars and other lines">
+          <button class="btn-icon fx-btn" title="Insert a variable or reference another line" onmousedown="event.preventDefault()" onclick="openFormulaPicker(${i})">ƒx</button>
+        </div>
       </td>
       <td class="ext-cell" id="ml-ext-${i}">${line.extended ? '$'+line.extended.toFixed(2) : ''}</td>
       <td style="display:none" id="ml-matid-${i}">${line.material_id||''}</td>
@@ -904,7 +925,7 @@ function selectMatForLine(matId) {
   clearBtn.onclick = () => clearMatLine(i);
   label.parentElement.appendChild(clearBtn);
   document.getElementById('mat-picker-dropdown').remove();
-  recalcMatLine(i);
+  recalcAllMatLines();
 }
 
 function clearMatLine(i) {
@@ -913,7 +934,7 @@ function clearMatLine(i) {
   document.getElementById(`ml-price-${i}`).value = '';
   document.getElementById(`ml-matid-${i}`).textContent = '';
   document.getElementById(`ml-snap-${i}`).textContent = '';
-  recalcMatLine(i);
+  recalcAllMatLines();
 }
 
 // ════════════════════════════════════════════════════════════
@@ -948,56 +969,204 @@ function evalCalcScratch() {
   }
   output.innerHTML = html || '<span style="color:var(--text-dim);font-size:11px">Variables will appear here...</span>';
   if (error) output.innerHTML += `<div class="calc-error">${error}</div>`;
+
+  // Calc vars feed material-line formulas — refresh them live
+  if (document.getElementById('mat-tbody')) recalcAllMatLines();
 }
 
-function evalMatQty(i) {
-  const formula = document.getElementById(`ml-qtyf-${i}`)?.value || '';
-  if (formula.startsWith('=')) {
-    const expr = formula.slice(1).replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, v =>
-      state.calcVars.hasOwnProperty(v) ? state.calcVars[v] : v
-    );
-    try {
-      const val = Function('"use strict"; return (' + expr + ')')();
-      document.getElementById(`ml-qtyf-${i}`).value = '=' + formula.slice(1); // keep formula
-      recalcMatLine(i, val);
-    } catch(e) {
-      document.getElementById(`ml-ext-${i}`).textContent = 'ERR';
+// ════════════════════════════════════════════════════════════
+// FORMULA ENGINE  (calc vars + other material lines as variables)
+// ════════════════════════════════════════════════════════════
+function countMatRows() {
+  let n = 0;
+  while (document.getElementById(`ml-price-${n}`)) n++;
+  return n;
+}
+
+function formatQty(n) {
+  if (n === null || n === undefined || isNaN(n)) return '';
+  return (Math.round(n * 10000) / 10000).toString();
+}
+
+// Evaluate an expression (no leading '='), resolving any known variable names.
+function evalFormula(expr) {
+  const replaced = String(expr).replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, v =>
+    state.formulaVars.hasOwnProperty(v) ? state.formulaVars[v] : v);
+  try {
+    const val = Function('"use strict"; return (' + replaced + ')')();
+    return (typeof val === 'number' && isFinite(val)) ? val : null;
+  } catch (e) { return null; }
+}
+
+// The raw text the user authored for a line's qty (formula or plain number).
+// While the field is focused it holds the editable text; otherwise the formula
+// lives in data-formula (the field shows the computed number).
+function getLineRawFormula(i) {
+  const el = document.getElementById(`ml-qtyf-${i}`);
+  if (!el) return '';
+  if (document.activeElement === el) return el.value.trim();
+  return (el.dataset.formula && el.dataset.formula.length) ? el.dataset.formula.trim() : el.value.trim();
+}
+
+function evalQtyRaw(raw) {
+  raw = (raw || '').trim();
+  if (!raw) return 0;
+  if (raw.startsWith('=')) { const v = evalFormula(raw.slice(1)); return v === null ? 0 : v; }
+  return parseFloat(raw) || 0;
+}
+
+// Build the variable table: calc-pad vars + each line's quantity as line1..lineN.
+// Iterate a few passes so lines that reference other lines resolve.
+function rebuildFormulaVars() {
+  state.formulaVars = Object.assign({}, state.calcVars);
+  const n = countMatRows();
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < n; i++) {
+      state.formulaVars['line' + (i + 1)] = evalQtyRaw(getLineRawFormula(i));
     }
-  } else {
-    recalcMatLine(i);
   }
 }
 
 // ════════════════════════════════════════════════════════════
 // CALCULATIONS
 // ════════════════════════════════════════════════════════════
-function recalcMatLine(i, overrideQty = null) {
-  const price = parseFloat(document.getElementById(`ml-price-${i}`)?.value) || 0;
+function updateMatLineDisplay(i) {
+  const priceEl = document.getElementById(`ml-price-${i}`);
+  if (!priceEl) return;
+  const price = parseFloat(priceEl.value) || 0;
   const mltp = parseFloat(document.getElementById(`ml-mltp-${i}`)?.value) || 1;
-  let qty;
-  if (overrideQty !== null) {
-    qty = overrideQty;
-  } else {
-    const qtyStr = document.getElementById(`ml-qtyf-${i}`)?.value || '';
-    if (qtyStr.startsWith('=')) {
-      const expr = qtyStr.slice(1).replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, v =>
-        state.calcVars.hasOwnProperty(v) ? state.calcVars[v] : v);
-      try { qty = Function('"use strict"; return (' + expr + ')')(); } catch(e) { qty = 0; }
+  const qtyEl = document.getElementById(`ml-qtyf-${i}`);
+  const raw = getLineRawFormula(i);
+  const isFormula = raw.startsWith('=');
+  let qty = evalQtyRaw(raw);
+
+  // Show the formula's output in the cell (unless the user is editing it now)
+  if (qtyEl && document.activeElement !== qtyEl) {
+    if (isFormula) {
+      const v = evalFormula(raw.slice(1));
+      qtyEl.dataset.formula = raw;
+      qtyEl.value = (v === null) ? 'ERR' : formatQty(v);
+      qtyEl.classList.add('has-formula');
+      qtyEl.title = 'Formula: ' + raw + '  —  click to edit';
     } else {
-      qty = parseFloat(qtyStr) || 0;
+      qtyEl.dataset.formula = '';
+      qtyEl.classList.remove('has-formula');
+      qtyEl.title = 'Type a number, or =formula referencing calc vars and other lines';
     }
   }
+
   const ext = price * mltp * qty;
   const extEl = document.getElementById(`ml-ext-${i}`);
   if (extEl) extEl.textContent = ext ? '$' + ext.toFixed(2) : '';
-  recalcSummary();
 }
 
 function recalcAllMatLines() {
-  const n = state.activeUnit?.material_lines?.length || 14;
-  for (let i = 0; i < Math.max(n, 14); i++) {
-    if (document.getElementById(`ml-price-${i}`)) recalcMatLine(i);
+  rebuildFormulaVars();
+  const n = countMatRows();
+  for (let i = 0; i < n; i++) updateMatLineDisplay(i);
+  recalcSummary();
+}
+
+// ── Qty field: reveal the formula on focus, recompute on blur ──
+function qtyFocus(i) {
+  const el = document.getElementById(`ml-qtyf-${i}`);
+  if (!el) return;
+  if (el.dataset.formula && el.dataset.formula.length) {
+    el.value = el.dataset.formula;     // show the raw formula for editing
+    el.classList.remove('has-formula');
   }
+  if (el.select) el.select();
+}
+
+function qtyBlur(i) {
+  const el = document.getElementById(`ml-qtyf-${i}`);
+  if (!el) return;
+  el.dataset.formula = el.value.trim().startsWith('=') ? el.value.trim() : '';
+  recalcAllMatLines();
+}
+
+// ════════════════════════════════════════════════════════════
+// FORMULA VARIABLE PICKER  (insert calc vars / reference other lines)
+// ════════════════════════════════════════════════════════════
+function openFormulaPicker(i) {
+  closeFormulaPicker();
+  // If the cell is showing a computed number, switch to its formula text first
+  const inp = document.getElementById(`ml-qtyf-${i}`);
+  if (inp && inp.dataset.formula && inp.dataset.formula.length && document.activeElement !== inp) {
+    inp.value = inp.dataset.formula;
+    inp.classList.remove('has-formula');
+  }
+
+  const cell = document.getElementById(`qty-cell-${i}`);
+  if (!cell) return;
+  const dd = document.createElement('div');
+  dd.className = 'formula-picker';
+  dd.id = 'formula-picker';
+
+  let html = `<div class="fp-section">Calc Pad Variables</div>`;
+  const calcKeys = Object.keys(state.calcVars || {});
+  if (calcKeys.length) {
+    calcKeys.forEach(k => {
+      const val = state.calcVars[k];
+      const shown = typeof val === 'number' ? val.toLocaleString(undefined, { maximumFractionDigits: 4 }) : val;
+      html += `<div class="fp-opt" onmousedown="event.preventDefault();insertFormulaToken(${i}, ${JSON.stringify(k)})">
+        <span class="fp-tok">${k}</span><span class="fp-val">${shown}</span></div>`;
+    });
+  } else {
+    html += `<div class="fp-empty">No variables yet — define them in the Calc Scratch Pad above.</div>`;
+  }
+
+  html += `<div class="fp-section">Other Lines (uses their quantity)</div>`;
+  const n = countMatRows();
+  let any = false;
+  for (let j = 0; j < n; j++) {
+    if (j === i) continue;
+    const lbl = (document.getElementById(`mp-label-${j}`)?.innerText || '').replace(/✕/g, '').trim();
+    if (!lbl || lbl.toLowerCase().startsWith('click to select')) continue;
+    any = true;
+    const unitName = document.getElementById(`ml-unit-${j}`)?.value || '';
+    const q = state.formulaVars ? state.formulaVars['line' + (j + 1)] : undefined;
+    html += `<div class="fp-opt" onmousedown="event.preventDefault();insertFormulaToken(${i}, 'line${j + 1}')">
+      <span><span class="fp-tok">line${j + 1}</span> · ${lbl}${unitName ? ' (' + unitName + ')' : ''}</span>
+      <span class="fp-val">${q !== undefined ? formatQty(q) : ''}</span></div>`;
+  }
+  if (!any) html += `<div class="fp-empty">No other lines with a material/description yet.</div>`;
+
+  dd.innerHTML = html;
+  cell.appendChild(dd);
+  setTimeout(() => document.addEventListener('mousedown', formulaPickerOutside, true), 0);
+}
+
+function formulaPickerOutside(e) {
+  const dd = document.getElementById('formula-picker');
+  if (dd && !dd.contains(e.target) && !e.target.classList.contains('fx-btn')) closeFormulaPicker();
+}
+
+function closeFormulaPicker() {
+  const dd = document.getElementById('formula-picker');
+  if (dd) dd.remove();
+  document.removeEventListener('mousedown', formulaPickerOutside, true);
+}
+
+function insertFormulaToken(i, token) {
+  const el = document.getElementById(`ml-qtyf-${i}`);
+  if (!el) return;
+  let cur = (el.dataset.formula && el.dataset.formula.length) ? el.dataset.formula : el.value;
+  cur = (cur || '').trim();
+  if (!cur.startsWith('=')) {
+    const num = (cur && !isNaN(parseFloat(cur))) ? cur : '';
+    cur = '=' + num;
+  }
+  let body = cur.slice(1).trim();
+  if (body.length && /[\w)\]]$/.test(body)) body += ' * ';   // chain with a sensible operator
+  body += token;
+  el.dataset.formula = '';
+  el.classList.remove('has-formula');
+  el.value = '=' + body;
+  closeFormulaPicker();
+  el.focus();
+  const len = el.value.length;
+  if (el.setSelectionRange) el.setSelectionRange(len, len);
 }
 
 function recalcLabLine(i) {
@@ -1064,15 +1233,8 @@ async function saveUnitLines() {
   const matLines = [];
   for (let i = 0; i < 14; i++) {
     if (!document.getElementById(`ml-price-${i}`)) break;
-    const qtyStr = document.getElementById(`ml-qtyf-${i}`)?.value || '';
-    let qty = 0;
-    if (qtyStr.startsWith('=')) {
-      const expr = qtyStr.slice(1).replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, v =>
-        state.calcVars.hasOwnProperty(v) ? state.calcVars[v] : v);
-      try { qty = Function('"use strict"; return (' + expr + ')')(); } catch(e) { qty = 0; }
-    } else {
-      qty = parseFloat(qtyStr) || 0;
-    }
+    const rawF = getLineRawFormula(i);
+    const qty = evalQtyRaw(rawF);
     const ext = parseFloat(document.getElementById(`ml-ext-${i}`)?.textContent.replace('$','')) || 0;
     matLines.push({
       line_order: i + 1,
@@ -1082,7 +1244,7 @@ async function saveUnitLines() {
       price_per_unit: parseFloat(document.getElementById(`ml-price-${i}`)?.value) || 0,
       price_snapshot: parseFloat(document.getElementById(`ml-snap-${i}`)?.textContent) || null,
       multiplier: parseFloat(document.getElementById(`ml-mltp-${i}`)?.value) || 1,
-      quantity_formula: qtyStr || null,
+      quantity_formula: rawF || null,
       quantity: qty,
       extended: ext,
     });
