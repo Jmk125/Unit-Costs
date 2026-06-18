@@ -111,7 +111,7 @@ function initSchema(db) {
       purchase_unit TEXT,
       price_per_unit REAL,
       price_snapshot REAL,
-      multiplier REAL DEFAULT 1,
+      multiplier REAL DEFAULT 1.1,
       quantity_formula TEXT,
       quantity REAL DEFAULT 0,
       extended REAL DEFAULT 0,
