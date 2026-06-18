@@ -677,7 +677,7 @@ function renderUnitDetail() {
   let matRows = '';
   const mlines = u.material_lines || [];
   // Ensure 14 rows
-  while (mlines.length < 14) mlines.push({ line_order: mlines.length + 1, multiplier: 1 });
+  while (mlines.length < 14) mlines.push({ line_order: mlines.length + 1, multiplier: 1.1 });
   mlines.forEach((line, i) => {
     const stalePriceClass = line.material_id && line.current_price !== null && line.price_snapshot !== line.current_price ? 'price-stale' : '';
     matRows += `<tr>
@@ -690,7 +690,7 @@ function renderUnitDetail() {
       </td>
       <td><input type="text" id="ml-unit-${i}" value="${line.purchase_unit||''}" style="width:60px;color:var(--text-muted)"></td>
       <td><input type="number" id="ml-price-${i}" step="0.01" value="${line.price_per_unit||''}" class="${stalePriceClass}" style="width:80px;text-align:right" oninput="recalcAllMatLines()"></td>
-      <td><input type="number" id="ml-mltp-${i}" step="0.01" value="${line.multiplier||1}" style="width:55px;text-align:center" oninput="recalcAllMatLines()"></td>
+      <td><input type="number" id="ml-mltp-${i}" step="0.01" value="${line.multiplier||1.1}" style="width:55px;text-align:center" oninput="recalcAllMatLines()"></td>
       <td style="position:relative" id="qty-cell-${i}">
         <div style="display:flex;align-items:center;gap:2px">
           <input type="text" id="ml-qtyf-${i}" value="${line.quantity_formula||''}" placeholder="qty or =formula" style="width:108px;font-family:var(--mono);font-size:11px" onfocus="qtyFocus(${i})" onblur="qtyBlur(${i})" title="Type a number, or =formula referencing calc vars and other lines">

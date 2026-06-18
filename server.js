@@ -205,9 +205,9 @@ app.post('/api/unit-costs', async (req, res) => {
   );
   const id = result.lastInsertRowid;
 
-  // Insert default empty lines
+  // Insert default empty lines (waste multiplier defaults to 1.1)
   for (let i = 0; i < 14; i++) {
-    run('INSERT INTO unit_cost_material_lines (unit_cost_id, line_order, multiplier) VALUES (?, ?, 1)', [id, i + 1]);
+    run('INSERT INTO unit_cost_material_lines (unit_cost_id, line_order, multiplier) VALUES (?, ?, 1.1)', [id, i + 1]);
   }
   for (let i = 0; i < 8; i++) {
     run('INSERT INTO unit_cost_labor_lines (unit_cost_id, line_order) VALUES (?, ?)', [id, i + 1]);
