@@ -184,6 +184,9 @@
   .price-stale { color: var(--amber); }
   .mat-stale-flag { cursor: pointer; font-size: 11px; line-height: 1; user-select: none; flex-shrink: 0; }
   .mat-stale-flag:hover { opacity: 0.7; }
+  .add-row-bar { padding: 6px 12px 10px; }
+  .add-row-btn { background: transparent; border: 1px dashed var(--border); color: var(--text-muted); font-size: 11px; padding: 4px 12px; border-radius: 4px; cursor: pointer; }
+  .add-row-btn:hover { color: var(--text); border-color: var(--text-muted); background: var(--surface2); }
   .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
   .empty-state .big { font-size: 36px; margin-bottom: 8px; }
   hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
@@ -764,24 +767,14 @@ function renderUnitsView() {
 // ════════════════════════════════════════════════════════════
 // UNIT COST DETAIL
 // ════════════════════════════════════════════════════════════
-function renderUnitDetail() {
-  const el = document.getElementById('view-units');
-  const u = state.activeUnit;
-  if (!u) { renderUnitsView(); return; }
 
-  const divLabel = (num) => { const d = state.divisions.find(d => d.num == num); return d ? d.label : `Div ${num}`; };
-  const stale = u.stale_count > 0;
-
-  // ── Material lines HTML
-  let matRows = '';
-  const mlines = u.material_lines || [];
-  // Ensure 14 rows
-  while (mlines.length < 14) mlines.push({ line_order: mlines.length + 1, multiplier: 1.1 });
-  mlines.forEach((line, i) => {
-    const stalePriceClass = line.material_id && line.current_price !== null && line.price_snapshot !== line.current_price ? 'price-stale' : '';
-    const refreshed = state.refreshedOrders.has(line.line_order || (i + 1));
-    const matEmpty = isMatLineEmpty(line);
-    matRows += `<tr class="${refreshed ? 'row-refreshed' : ''}">
+// Markup for a single material line. Shared by the initial render and the
+// "+ Add row" action so the two never drift apart.
+function matRowHtml(line, i) {
+  const stalePriceClass = line.material_id && line.current_price !== null && line.price_snapshot !== line.current_price ? 'price-stale' : '';
+  const refreshed = state.refreshedOrders.has(line.line_order || (i + 1));
+  const matEmpty = isMatLineEmpty(line);
+  return `<tr class="${refreshed ? 'row-refreshed' : ''}">
       ${state.deleteMode ? `<td class="del-check-cell">${matEmpty ? '' : `<input type="checkbox" class="del-check" data-type="mat" data-idx="${i}" onchange="onDeleteCheckChange()">`}</td>` : ''}
       <td class="row-num">${i+1}</td>
       <td class="mat-picker" id="mp-cell-${i}">
@@ -805,15 +798,12 @@ function renderUnitDetail() {
       <td style="display:none" id="ml-matid-${i}">${line.material_id||''}</td>
       <td style="display:none" id="ml-snap-${i}">${line.price_snapshot||''}</td>
     </tr>`;
-  });
+}
 
-  // ── Labor lines HTML
-  let labRows = '';
-  const llines = u.labor_lines || [];
-  while (llines.length < 8) llines.push({ line_order: llines.length + 1 });
-  llines.forEach((line, i) => {
-    const labEmpty = isLabLineEmpty(line);
-    labRows += `<tr>
+// Markup for a single labor / equipment line.
+function labRowHtml(line, i) {
+  const labEmpty = isLabLineEmpty(line);
+  return `<tr>
       ${state.deleteMode ? `<td class="del-check-cell">${labEmpty ? '' : `<input type="checkbox" class="del-check" data-type="lab" data-idx="${i}" onchange="onDeleteCheckChange()">`}</td>` : ''}
       <td class="row-num">${i+1}</td>
       <td><input type="text" id="ll-type-${i}" value="${line.labor_type||''}" placeholder="Labor or equipment" style="min-width:160px" onkeydown="cellNav(event)"></td>
@@ -823,7 +813,52 @@ function renderUnitDetail() {
       <td><input type="number" id="ll-rate-${i}" step="0.50" value="${line.labor_rate||''}" style="width:80px;text-align:right" oninput="recalcLabLine(${i})" placeholder="$/hr" onkeydown="cellNav(event)"></td>
       <td class="ext-cell" id="ll-ext-${i}">${line.extended ? '$'+line.extended.toFixed(2) : ''}</td>
     </tr>`;
-  });
+}
+
+// Append a blank material / labor row to its table on demand.
+function addMatRow() {
+  const tbody = document.getElementById('mat-tbody');
+  if (!tbody) return;
+  const i = countMatRows();
+  tbody.insertAdjacentHTML('beforeend', matRowHtml({ line_order: i + 1, multiplier: 1.1 }, i));
+  recalcAllMatLines();
+  document.getElementById(`ml-unit-${i}`)?.scrollIntoView({ block: 'nearest' });
+}
+
+function addLabRow() {
+  const tbody = document.getElementById('lab-tbody');
+  if (!tbody) return;
+  const i = countLabRows();
+  tbody.insertAdjacentHTML('beforeend', labRowHtml({ line_order: i + 1 }, i));
+  document.getElementById(`ll-type-${i}`)?.focus();
+}
+
+function countLabRows() {
+  let n = 0;
+  while (document.getElementById(`ll-crew-${n}`)) n++;
+  return n;
+}
+
+function renderUnitDetail() {
+  const el = document.getElementById('view-units');
+  const u = state.activeUnit;
+  if (!u) { renderUnitsView(); return; }
+
+  const divLabel = (num) => { const d = state.divisions.find(d => d.num == num); return d ? d.label : `Div ${num}`; };
+  const stale = u.stale_count > 0;
+
+  // ── Material lines HTML
+  let matRows = '';
+  const mlines = u.material_lines || [];
+  // Ensure 14 rows
+  while (mlines.length < 14) mlines.push({ line_order: mlines.length + 1, multiplier: 1.1 });
+  mlines.forEach((line, i) => { matRows += matRowHtml(line, i); });
+
+  // ── Labor lines HTML
+  let labRows = '';
+  const llines = u.labor_lines || [];
+  while (llines.length < 8) llines.push({ line_order: llines.length + 1 });
+  llines.forEach((line, i) => { labRows += labRowHtml(line, i); });
 
   // Calc vars for display
   const calcScratch = u.calc_scratch || '';
@@ -894,6 +929,7 @@ price = round(rebar_tons * 1850, 2)          // round to 2 decimals
             </tr>
           </tfoot>
         </table>
+        <div class="add-row-bar"><button class="add-row-btn" onclick="addMatRow()" title="Add another material row">+ Add row</button></div>
       </div>
 
       <!-- LABOR / EQUIPMENT TABLE -->
@@ -918,6 +954,7 @@ price = round(rebar_tons * 1850, 2)          // round to 2 decimals
             </tr>
           </tfoot>
         </table>
+        <div class="add-row-bar"><button class="add-row-btn" onclick="addLabRow()" title="Add another labor / equipment row">+ Add row</button></div>
       </div>
 
       <!-- DELETE ITEM BAR -->
@@ -2041,26 +2078,18 @@ function recalcLabLine(i) {
 }
 
 function recalcAllLabLines() {
-  const n = state.activeUnit?.labor_lines?.length || 8;
-  for (let i = 0; i < Math.max(n, 8); i++) {
-    if (document.getElementById(`ll-crew-${i}`)) recalcLabLine(i);
-  }
+  const n = countLabRows();
+  for (let i = 0; i < n; i++) recalcLabLine(i);
 }
 
 function recalcSummary() {
   let matTotal = 0;
-  for (let i = 0; i < 20; i++) {
-    const ext = document.getElementById(`ml-ext-${i}`);
-    if (!ext) break;
-    const val = parseFloat(ext.textContent.replace('$','')) || 0;
-    matTotal += val;
+  for (let i = 0; document.getElementById(`ml-ext-${i}`); i++) {
+    matTotal += parseFloat(document.getElementById(`ml-ext-${i}`).textContent.replace('$','')) || 0;
   }
   let labTotal = 0;
-  for (let i = 0; i < 20; i++) {
-    const ext = document.getElementById(`ll-ext-${i}`);
-    if (!ext) break;
-    const val = parseFloat(ext.textContent.replace('$','')) || 0;
-    labTotal += val;
+  for (let i = 0; document.getElementById(`ll-ext-${i}`); i++) {
+    labTotal += parseFloat(document.getElementById(`ll-ext-${i}`).textContent.replace('$','')) || 0;
   }
   const sub = matTotal + labTotal;
   const bondPct = parseFloat(document.getElementById('sum-bond-pct')?.value) || 0;
@@ -2109,7 +2138,8 @@ function getFinalCost() {
 async function saveUnitLines() {
   const id = state.activeUnitId;
   const matLines = [];
-  for (let i = 0; i < 14; i++) {
+  const nMat = countMatRows();
+  for (let i = 0; i < nMat; i++) {
     if (!document.getElementById(`ml-price-${i}`)) break;
     const rawF = getLineRawFormula(i);
     const qty = evalQtyRaw(rawF);
@@ -2129,7 +2159,8 @@ async function saveUnitLines() {
   }
 
   const labLines = [];
-  for (let i = 0; i < 8; i++) {
+  const nLab = countLabRows();
+  for (let i = 0; i < nLab; i++) {
     if (!document.getElementById(`ll-crew-${i}`)) break;
     const crew = parseFloat(document.getElementById(`ll-crew-${i}`)?.value) || 0;
     const hrs = parseFloat(document.getElementById(`ll-hrs-${i}`)?.value) || 0;
