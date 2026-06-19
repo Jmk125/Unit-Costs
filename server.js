@@ -253,7 +253,8 @@ app.put('/api/unit-costs/:id/material-lines', async (req, res) => {
        line.multiplier || 1, line.quantity_formula || null, line.quantity || 0, line.extended || 0]
     );
   }
-  run(`UPDATE unit_costs SET updated_at=datetime('now') WHERE id=?`, [id]);
+  // A content change means the published snapshot is now out of date
+  run(`UPDATE unit_costs SET updated_at=datetime('now'), status='draft' WHERE id=?`, [id]);
   res.json({ success: true });
 });
 

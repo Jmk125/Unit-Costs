@@ -209,6 +209,11 @@
   .mat-picker-footer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
   .mat-picker-footer .btn { flex: 1; justify-content: center; }
   .mat-browser-list { max-height: 50vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-top: 8px; }
+
+  /* ── REFRESHED-PRICE HIGHLIGHT (until saved) ── */
+  .data-table tr.row-refreshed td { background: var(--green-dim); }
+  .data-table tr.row-refreshed:hover td { background: var(--green-dim); }
+  .refreshed-tag { font-size: 9px; font-weight: 700; color: var(--green); background: rgba(46,204,113,0.15); border: 1px solid var(--green); border-radius: 3px; padding: 0 4px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.4px; vertical-align: middle; }
 </style>
 </head>
 <body>
@@ -255,6 +260,7 @@ let state = {
   activeUnit: null,
   calcVars: {},
   formulaVars: {},
+  refreshedOrders: new Set(),
 };
 
 const UNITS = ['SF','SY','LF','EA','CY','CW','CF','Ton','Roll','Box','CTN','LB','LS','SQ','MBF'];
@@ -382,6 +388,7 @@ function selectDivisionMaterial(div) {
 
 async function selectUnit(id) {
   state.activeUnitId = id;
+  state.refreshedOrders = new Set();
   state.activeUnit = await api(`/api/unit-costs/${id}`);
   renderSidebar();
   renderUnitDetail();
@@ -619,6 +626,14 @@ async function unlinkBackup(matId, fileId) {
   showMaterialHistory(matId);
 }
 
+// A unit that's been published but edited since shows "needs republish".
+function unitStatusInfo(u) {
+  const hasPub = (u.publications && u.publications.length) || u.last_published_at;
+  if (u.status === 'published') return { cls: 'badge-published', label: 'published' };
+  if (hasPub) return { cls: 'badge-stale', label: 'needs republish' };
+  return { cls: 'badge-draft', label: 'draft' };
+}
+
 // ════════════════════════════════════════════════════════════
 // UNIT COSTS VIEW (list)
 // ════════════════════════════════════════════════════════════
@@ -653,7 +668,7 @@ function renderUnitsView() {
           <td><strong>${u.name}</strong>${u.stale_count > 0 ? ` <span title="${u.stale_count} material price(s) updated — open and refresh" style="cursor:help">⚠️</span>` : ''}</td>
           <td><code style="color:var(--text-muted)">${u.output_unit}</code></td>
           <td class="num" style="text-align:right;color:var(--green)">${u.last_published_cost ? '$'+parseFloat(u.last_published_cost).toFixed(2) : '—'}</td>
-          <td><span class="badge badge-${u.status}">${u.status}</span></td>
+          <td>${(() => { const s = unitStatusInfo(u); return `<span class="badge ${s.cls}">${s.label}</span>`; })()}</td>
           <td style="color:var(--text-muted);font-size:11px">${u.last_published_at ? u.last_published_at.split('T')[0] : '—'}</td>
           <td><button class="btn-icon" onclick="event.stopPropagation();deleteUnit(${u.id})">🗑️</button></td>
         </tr>`;
@@ -682,11 +697,13 @@ function renderUnitDetail() {
   while (mlines.length < 14) mlines.push({ line_order: mlines.length + 1, multiplier: 1.1 });
   mlines.forEach((line, i) => {
     const stalePriceClass = line.material_id && line.current_price !== null && line.price_snapshot !== line.current_price ? 'price-stale' : '';
-    matRows += `<tr>
+    const refreshed = state.refreshedOrders.has(line.line_order || (i + 1));
+    matRows += `<tr class="${refreshed ? 'row-refreshed' : ''}">
       <td class="row-num">${i+1}</td>
       <td class="mat-picker" id="mp-cell-${i}">
         <div style="display:flex;align-items:center;gap:4px">
           <span id="mp-label-${i}" class="mp-label ${(line.description || line.master_name) ? 'set' : ''}" onclick="openMatPicker(${i})">${line.description || line.master_name || 'Click to select...'}</span>
+          ${refreshed ? '<span class="refreshed-tag" title="Price updated from master — save to keep">updated</span>' : ''}
           ${(line.description || line.master_name) ? `<button class="btn-icon mat-clear-btn" style="font-size:10px" onclick="clearMatLine(${i})">✕</button>` : ''}
         </div>
       </td>
@@ -732,7 +749,7 @@ function renderUnitDetail() {
       <div class="panel-sub">${divLabel(u.division)} · Output: <strong>${u.output_unit}</strong> · Created by ${u.created_by}</div>
     </div>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-      <span class="badge badge-${u.status}">${u.status}</span>
+      <span class="badge ${unitStatusInfo(u).cls}">${unitStatusInfo(u).label}</span>
       <button class="btn btn-secondary btn-sm" onclick="saveUnitLines()">💾 Save</button>
       <button class="btn btn-success btn-sm" onclick="showPublishModal()">📤 Publish</button>
       <button class="btn btn-secondary btn-sm" onclick="showPublicationHistory()">📋 History</button>
@@ -1481,16 +1498,31 @@ async function saveUnitLines() {
   })});
 
   state.activeUnit = await api(`/api/unit-costs/${id}`);
+  state.refreshedOrders = new Set();   // saved — clear the "updated" highlights
   await loadUnitCosts();
   renderSidebar();
+  renderUnitDetail();
   alert('Saved ✓');
 }
 
 async function refreshPrices() {
+  // Capture line prices before the refresh so we can highlight what changed
+  const before = {};
+  (state.activeUnit.material_lines || []).forEach(l => { before[l.line_order] = l.price_per_unit; });
+
   const res = await api(`/api/unit-costs/${state.activeUnitId}/refresh-prices`, { method: 'POST' });
   state.activeUnit = await api(`/api/unit-costs/${state.activeUnitId}`);
+
+  state.refreshedOrders = new Set();
+  (state.activeUnit.material_lines || []).forEach(l => {
+    const old = before[l.line_order];
+    if (old !== undefined && Math.round((old || 0) * 100) !== Math.round((l.price_per_unit || 0) * 100)) {
+      state.refreshedOrders.add(l.line_order);
+    }
+  });
+
   renderUnitDetail();
-  alert(`Updated ${res.updated} price(s)`);
+  alert(`Updated ${res.updated} price(s) — highlighted below. Save to keep, then republish.`);
 }
 
 // ════════════════════════════════════════════════════════════
