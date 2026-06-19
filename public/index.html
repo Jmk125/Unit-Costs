@@ -1092,8 +1092,26 @@ function renderMatOptions(filter) {
   el.innerHTML = filtered.map(m => `
     <div class="mat-option" onmousedown="selectMatForLine(${m.id})">
       <div class="mat-opt-name">${m.item_name}</div>
-      <div class="mat-opt-meta"><span>${divLabel(m.division)}</span><span>${m.purchase_unit}</span><span style="color:var(--green)">$${parseFloat(m.cost_per_unit).toFixed(2)}</span></div>
+      <div class="mat-opt-meta"><span>${divLabel(m.division)}</span><span>${m.purchase_unit}</span><span style="color:var(--green)">$${parseFloat(m.cost_per_unit).toFixed(2)}</span>${matUpdatedMeta(m)}</div>
     </div>`).join('');
+}
+
+// A small "last updated" badge for material pickers, colored by age so a
+// stale price (>6mo amber, >1yr red) jumps out while building a unit cost.
+function matUpdatedMeta(m) {
+  const d = m.date_updated;
+  if (!d) return `<span style="color:var(--text-dim);margin-left:auto">no date</span>`;
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return `<span style="color:var(--text-muted);margin-left:auto">upd ${d}</span>`;
+  const days = Math.floor((Date.now() - dt.getTime()) / 86400000);
+  let color = 'var(--text-muted)', flag = '';
+  if (days > 365) { color = 'var(--red)'; flag = ' ⚠️'; }
+  else if (days > 180) { color = 'var(--amber)'; }
+  const ago = days < 1 ? 'today'
+    : days < 31 ? `${days}d ago`
+    : days < 365 ? `${Math.round(days / 30)}mo ago`
+    : `${(days / 365).toFixed(1)}y ago`;
+  return `<span title="Price last updated ${d} (${ago})" style="color:${color};margin-left:auto;white-space:nowrap">upd ${d}${flag}</span>`;
 }
 
 function closeMatPicker(e) {
@@ -1241,7 +1259,7 @@ function renderMatBrowserList(filter) {
     grouped[div].forEach(m => {
       html += `<div class="mat-option" onclick="selectMatFromBrowser(${m.id})">
         <div class="mat-opt-name">${m.item_name}</div>
-        <div class="mat-opt-meta"><span>${m.purchase_unit}</span><span style="color:var(--green)">$${parseFloat(m.cost_per_unit).toFixed(2)}</span></div>
+        <div class="mat-opt-meta"><span>${m.purchase_unit}</span><span style="color:var(--green)">$${parseFloat(m.cost_per_unit).toFixed(2)}</span>${matUpdatedMeta(m)}</div>
       </div>`;
     });
   });
