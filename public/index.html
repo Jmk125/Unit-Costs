@@ -137,6 +137,8 @@
   .calc-var { display: inline-block; background: var(--accent-dim); color: var(--accent); padding: 1px 6px; border-radius: 3px; margin: 2px; font-size: 11px; cursor: pointer; }
   .calc-var:hover { background: var(--accent); color: #fff; }
   .calc-error { color: var(--red); font-size: 11px; }
+  /* While editing a qty formula, signal that other material lines can be clicked in */
+  body.qty-formula-active .mp-label.set { outline: 1px dashed var(--accent); outline-offset: 2px; cursor: copy; }
 
   /* ── SUMMARY BOX ── */
   .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -266,6 +268,7 @@ let state = {
   formulaVars: {},
   refreshedOrders: new Set(),
   deleteMode: false,
+  activeFormula: null,
 };
 
 const UNITS = ['SF','SY','LF','EA','CY','CW','CF','Ton','Roll','Box','CTN','LB','LS','SQ','MBF'];
@@ -709,17 +712,17 @@ function renderUnitDetail() {
       <td class="row-num">${i+1}</td>
       <td class="mat-picker" id="mp-cell-${i}">
         <div style="display:flex;align-items:center;gap:4px">
-          <span id="mp-label-${i}" class="mp-label ${(line.description || line.master_name) ? 'set' : ''}" onclick="openMatPicker(${i})">${line.description || line.master_name || 'Click to select...'}</span>
+          <span id="mp-label-${i}" class="mp-label ${(line.description || line.master_name) ? 'set' : ''}" title="Click to select a material — or, while typing a formula, click to insert this line into it" onmousedown="onMatLabelMouseDown(event, ${i})" onclick="matLabelClick(${i})">${line.description || line.master_name || 'Click to select...'}</span>
           ${refreshed ? '<span class="refreshed-tag" title="Price updated from master — save to keep">updated</span>' : ''}
           ${(line.description || line.master_name) ? `<button class="btn-icon mat-clear-btn" style="font-size:10px" onclick="clearMatLine(${i})">✕</button>` : ''}
         </div>
       </td>
-      <td><input type="text" id="ml-unit-${i}" value="${line.purchase_unit||''}" style="width:60px;color:var(--text-muted)"></td>
-      <td><input type="number" id="ml-price-${i}" step="0.01" value="${line.price_per_unit||''}" class="${stalePriceClass}" style="width:80px;text-align:right" oninput="recalcAllMatLines()" onchange="maybePromptMasterUpdate(${i})"></td>
-      <td><input type="number" id="ml-mltp-${i}" step="0.01" value="${line.multiplier||1.1}" style="width:55px;text-align:center" oninput="recalcAllMatLines()"></td>
+      <td><input type="text" id="ml-unit-${i}" value="${line.purchase_unit||''}" style="width:60px;color:var(--text-muted)" onkeydown="cellNav(event)"></td>
+      <td><input type="number" id="ml-price-${i}" step="0.01" value="${line.price_per_unit||''}" class="${stalePriceClass}" style="width:80px;text-align:right" oninput="recalcAllMatLines()" onchange="maybePromptMasterUpdate(${i})" onkeydown="cellNav(event)"></td>
+      <td><input type="number" id="ml-mltp-${i}" step="0.01" value="${line.multiplier||1.1}" style="width:55px;text-align:center" oninput="recalcAllMatLines()" onkeydown="cellNav(event)"></td>
       <td style="position:relative" id="qty-cell-${i}">
         <div style="display:flex;align-items:center;gap:2px">
-          <input type="text" id="ml-qtyf-${i}" value="${line.quantity_formula||''}" placeholder="qty or =formula" style="width:108px;font-family:var(--mono);font-size:11px" onfocus="qtyFocus(${i})" onblur="qtyBlur(${i})" title="Type a number, or =formula referencing calc vars and other lines">
+          <input type="text" id="ml-qtyf-${i}" value="${line.quantity_formula||''}" placeholder="qty or =formula" style="width:108px;font-family:var(--mono);font-size:11px" onfocus="qtyFocus(${i})" onblur="qtyBlur(${i})" onkeydown="cellNav(event)" title="Type a number, or =formula referencing calc vars and other lines">
           <button class="btn-icon fx-btn" title="Insert a variable or reference another line" onmousedown="event.preventDefault()" onclick="openFormulaPicker(${i})">ƒx</button>
         </div>
       </td>
@@ -738,11 +741,11 @@ function renderUnitDetail() {
     labRows += `<tr>
       ${state.deleteMode ? `<td class="del-check-cell">${labEmpty ? '' : `<input type="checkbox" class="del-check" data-type="lab" data-idx="${i}" onchange="onDeleteCheckChange()">`}</td>` : ''}
       <td class="row-num">${i+1}</td>
-      <td><input type="text" id="ll-type-${i}" value="${line.labor_type||''}" placeholder="Labor or equipment" style="min-width:160px"></td>
-      <td><input type="number" id="ll-crew-${i}" step="1" value="${line.crew_size||''}" style="width:60px;text-align:center" oninput="recalcLabLine(${i})"></td>
-      <td><input type="number" id="ll-hrs-${i}" step="0.5" value="${line.hours||''}" style="width:70px;text-align:right" oninput="recalcLabLine(${i})" placeholder="per unit"></td>
+      <td><input type="text" id="ll-type-${i}" value="${line.labor_type||''}" placeholder="Labor or equipment" style="min-width:160px" onkeydown="cellNav(event)"></td>
+      <td><input type="number" id="ll-crew-${i}" step="1" value="${line.crew_size||''}" style="width:60px;text-align:center" oninput="recalcLabLine(${i})" onkeydown="cellNav(event)"></td>
+      <td><input type="number" id="ll-hrs-${i}" step="0.5" value="${line.hours||''}" style="width:70px;text-align:right" oninput="recalcLabLine(${i})" placeholder="per unit" onkeydown="cellNav(event)"></td>
       <td class="num" id="ll-hrstot-${i}" style="text-align:right">${line.hours_total || ''}</td>
-      <td><input type="number" id="ll-rate-${i}" step="0.50" value="${line.labor_rate||''}" style="width:80px;text-align:right" oninput="recalcLabLine(${i})" placeholder="$/hr"></td>
+      <td><input type="number" id="ll-rate-${i}" step="0.50" value="${line.labor_rate||''}" style="width:80px;text-align:right" oninput="recalcLabLine(${i})" placeholder="$/hr" onkeydown="cellNav(event)"></td>
       <td class="ext-cell" id="ll-ext-${i}">${line.extended ? '$'+line.extended.toFixed(2) : ''}</td>
     </tr>`;
   });
@@ -784,7 +787,7 @@ wall_lf = 320
 cmu_per_sf = 1.125
 rebar_tons = wall_sf * 0.004
 
-// Results appear below as you type" oninput="evalCalcScratch()">${calcScratch}</textarea>
+// Results appear below as you type" oninput="evalCalcScratch()" onfocus="setActiveFormula('scratch', this)">${calcScratch}</textarea>
           <div class="calc-output" id="calc-output"></div>
         </div>
       </div>
@@ -1304,7 +1307,7 @@ function evalCalcScratch() {
       try {
         const val = Function('"use strict"; return (' + expr + ')')();
         state.calcVars[varName] = val;
-        html += `<span class="calc-var" title="Click to insert">${varName} = ${typeof val === 'number' ? val.toLocaleString(undefined, {maximumFractionDigits:4}) : val}</span>`;
+        html += `<span class="calc-var" title="Click to insert into the formula you're editing" onmousedown="event.preventDefault();insertFormulaRef('${varName}')">${varName} = ${typeof val === 'number' ? val.toLocaleString(undefined, {maximumFractionDigits:4}) : val}</span>`;
       } catch(e) {
         error = `Error in: ${trimmed}`;
       }
@@ -1418,6 +1421,7 @@ function qtyFocus(i) {
     el.value = el.dataset.formula;     // show the raw formula for editing
     el.classList.remove('has-formula');
   }
+  setActiveFormula('qty', el, i);
   if (el.select) el.select();
 }
 
@@ -1425,7 +1429,80 @@ function qtyBlur(i) {
   const el = document.getElementById(`ml-qtyf-${i}`);
   if (!el) return;
   el.dataset.formula = el.value.trim().startsWith('=') ? el.value.trim() : '';
+  document.body.classList.remove('qty-formula-active');
   recalcAllMatLines();
+}
+
+// ════════════════════════════════════════════════════════════
+// SPREADSHEET NAVIGATION + CLICK-TO-INSERT FORMULA REFERENCES
+// ════════════════════════════════════════════════════════════
+// Enter moves focus straight down the same column to the next row.
+function cellNav(e) {
+  if (e.key !== 'Enter') return;
+  const m = (e.target.id || '').match(/^(.*-)(\d+)$/);   // e.g. "ll-crew-3" -> ["ll-crew-", "3"]
+  if (!m) return;
+  e.preventDefault();
+  const next = document.getElementById(m[1] + (parseInt(m[2], 10) + 1));
+  if (next) {
+    next.focus();
+    if (next.select) next.select();
+  } else {
+    e.target.blur();   // last row — commit the value
+  }
+}
+
+// Remember which formula-capable field the user is editing so clicked
+// variables / line references can be inserted at the cursor.
+function setActiveFormula(kind, el, row) {
+  state.activeFormula = { kind, el, row };
+  document.body.classList.toggle('qty-formula-active', kind === 'qty');
+}
+
+function insertTextAtCursor(el, text) {
+  const start = (el.selectionStart != null) ? el.selectionStart : el.value.length;
+  const end = (el.selectionEnd != null) ? el.selectionEnd : el.value.length;
+  el.value = el.value.slice(0, start) + text + el.value.slice(end);
+  const pos = start + text.length;
+  el.focus();
+  if (el.setSelectionRange) el.setSelectionRange(pos, pos);
+}
+
+// Insert a token (a calc-pad variable name, or "lineN") into the formula
+// the user is currently editing.
+function insertFormulaRef(token) {
+  const af = state.activeFormula;
+  if (!af || !af.el || document.activeElement !== af.el) return;   // only when actively editing
+  const el = af.el;
+  if (af.kind === 'qty' && !el.value.trim().startsWith('=')) {
+    // Promote a plain field to a formula so the reference makes sense
+    const num = el.value.trim();
+    el.value = '=' + (num && !isNaN(parseFloat(num)) ? num : '');
+    el.dataset.formula = '';
+    el.classList.remove('has-formula');
+    if (el.setSelectionRange) el.setSelectionRange(el.value.length, el.value.length);
+  }
+  insertTextAtCursor(el, token);
+  if (af.kind === 'scratch') evalCalcScratch();
+}
+
+// Material name labels double as "insert this line" targets while a qty
+// formula is being edited. Use mousedown+preventDefault to keep the
+// formula field focused; suppress the follow-up click that opens the picker.
+let suppressMatClick = false;
+function onMatLabelMouseDown(e, i) {
+  const af = state.activeFormula;
+  const lbl = document.getElementById(`mp-label-${i}`);
+  const hasContent = lbl && lbl.classList.contains('set');
+  if (af && af.kind === 'qty' && af.row !== i && hasContent && document.activeElement === af.el) {
+    e.preventDefault();          // don't blur the formula field
+    suppressMatClick = true;     // and don't open the material picker
+    insertFormulaRef('line' + (i + 1));
+  }
+}
+
+function matLabelClick(i) {
+  if (suppressMatClick) { suppressMatClick = false; return; }
+  openMatPicker(i);
 }
 
 // ════════════════════════════════════════════════════════════
