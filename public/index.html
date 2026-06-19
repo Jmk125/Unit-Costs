@@ -156,6 +156,14 @@
   .hist-price { font-family: var(--mono); font-weight: 600; width: 80px; }
   .hist-by { color: var(--text-muted); width: 60px; }
   .hist-note { color: var(--text-muted); flex: 1; }
+  .hist-act-btn { margin-left: 2px; opacity: 0.55; }
+  .hist-act-btn:hover { opacity: 1; }
+  .hist-row-edit { gap: 6px; }
+  .hist-row-edit input { background: var(--input-bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+  .hist-edit-date { width: 130px; flex-shrink: 0; }
+  .hist-edit-cost { width: 80px; flex-shrink: 0; font-family: var(--mono); }
+  .hist-edit-by { width: 64px; flex-shrink: 0; }
+  .hist-edit-note { flex: 1; min-width: 0; }
 
   /* ── MODAL ── */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; display: flex; align-items: center; justify-content: center; }
@@ -684,19 +692,33 @@ async function deleteMaterial(id) {
   renderSidebar();
 }
 
-async function showMaterialHistory(id) {
+async function showMaterialHistory(id, editingHistId = null) {
   const mat = await api(`/api/materials/${id}`);
   let histHtml = '';
   if (!mat.history.length) {
     histHtml = '<div style="color:var(--text-muted);font-size:12px">No price history yet.</div>';
   } else {
     mat.history.forEach(h => {
-      histHtml += `<div class="hist-row">
-        <div class="hist-date">${h.date_updated}</div>
-        <div class="hist-price">$${parseFloat(h.cost_per_unit).toFixed(2)}</div>
-        <div class="hist-by">${h.updated_by}</div>
-        <div class="hist-note">${h.comments||''}</div>
-      </div>`;
+      const esc = (s) => String(s ?? '').replace(/"/g, '&quot;');
+      if (h.id === editingHistId) {
+        histHtml += `<div class="hist-row hist-row-edit">
+          <input id="hist-date" type="date" value="${esc(h.date_updated)}" class="hist-edit-date">
+          <input id="hist-cost" type="number" step="0.01" value="${parseFloat(h.cost_per_unit)}" class="hist-edit-cost">
+          <input id="hist-by" value="${esc(h.updated_by)}" class="hist-edit-by" placeholder="By">
+          <input id="hist-note" value="${esc(h.comments)}" class="hist-edit-note" placeholder="Comments">
+          <button class="btn-icon" title="Save changes" onclick="saveHistoryEdit(${id}, ${h.id})">💾</button>
+          <button class="btn-icon" title="Cancel" onclick="showMaterialHistory(${id})">✕</button>
+        </div>`;
+      } else {
+        histHtml += `<div class="hist-row">
+          <div class="hist-date">${h.date_updated}</div>
+          <div class="hist-price">$${parseFloat(h.cost_per_unit).toFixed(2)}</div>
+          <div class="hist-by">${h.updated_by}</div>
+          <div class="hist-note">${h.comments||''}</div>
+          <button class="btn-icon hist-act-btn" title="Edit this history entry" onclick="showMaterialHistory(${id}, ${h.id})">✎</button>
+          <button class="btn-icon hist-act-btn" title="Delete this history entry" onclick="deleteHistoryEntry(${id}, ${h.id})">🗑️</button>
+        </div>`;
+      }
     });
   }
 
@@ -720,6 +742,24 @@ async function showMaterialHistory(id) {
     ${histHtml}
     ${filesHtml}
     <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>`);
+}
+
+async function saveHistoryEdit(matId, histId) {
+  const body = {
+    cost_per_unit: +document.getElementById('hist-cost').value,
+    date_updated: document.getElementById('hist-date').value,
+    updated_by: document.getElementById('hist-by').value.trim(),
+    comments: document.getElementById('hist-note').value.trim(),
+  };
+  if (!body.cost_per_unit || !body.date_updated) return alert('Price and date are required.');
+  await api(`/api/materials/${matId}/history/${histId}`, { method: 'PUT', body: JSON.stringify(body) });
+  showMaterialHistory(matId);
+}
+
+async function deleteHistoryEntry(matId, histId) {
+  if (!confirm('Delete this history entry? This cannot be undone.')) return;
+  await api(`/api/materials/${matId}/history/${histId}`, { method: 'DELETE' });
+  showMaterialHistory(matId);
 }
 
 async function unlinkBackup(matId, fileId) {

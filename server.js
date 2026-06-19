@@ -95,6 +95,28 @@ app.delete('/api/materials/:id', async (req, res) => {
   res.json({ success: true });
 });
 
+// Edit a single price-history entry (to correct a mistaken archived price)
+app.put('/api/materials/:id/history/:histId', async (req, res) => {
+  await getDb();
+  const { id, histId } = req.params;
+  const existing = query('SELECT * FROM material_price_history WHERE id = ? AND material_id = ?', [histId, id]);
+  if (!existing.length) return res.status(404).json({ error: 'Not found' });
+  const { cost_per_unit, date_updated, updated_by, comments } = req.body;
+  run(
+    `UPDATE material_price_history SET cost_per_unit=?, date_updated=?, updated_by=?, comments=? WHERE id=?`,
+    [cost_per_unit, date_updated, updated_by, comments || null, histId]
+  );
+  res.json({ success: true });
+});
+
+// Delete a single price-history entry
+app.delete('/api/materials/:id/history/:histId', async (req, res) => {
+  await getDb();
+  const { id, histId } = req.params;
+  run('DELETE FROM material_price_history WHERE id = ? AND material_id = ?', [histId, id]);
+  res.json({ success: true });
+});
+
 // Link backup file to material
 app.post('/api/materials/:id/backup-links', async (req, res) => {
   await getDb();
