@@ -722,7 +722,7 @@ function renderUnitDetail() {
       <td><input type="number" id="ml-mltp-${i}" step="0.01" value="${line.multiplier||1.1}" style="width:55px;text-align:center" oninput="recalcAllMatLines()" onkeydown="cellNav(event)"></td>
       <td style="position:relative" id="qty-cell-${i}">
         <div style="display:flex;align-items:center;gap:2px">
-          <input type="text" id="ml-qtyf-${i}" value="${line.quantity_formula||''}" placeholder="qty or =formula" style="width:108px;font-family:var(--mono);font-size:11px" onfocus="qtyFocus(${i})" onblur="qtyBlur(${i})" onkeydown="cellNav(event)" title="Type a number, or =formula referencing calc vars and other lines">
+          <input type="text" id="ml-qtyf-${i}" value="${line.quantity_formula||''}" placeholder="qty or =formula" style="width:108px;font-family:var(--mono);font-size:11px" onfocus="qtyFocus(${i})" onblur="qtyBlur(${i})" onkeydown="cellNav(event)" title="Type a number, or =formula referencing calc vars and other lines. Functions: round(x,2), roundup(x), rounddown(x), mround(x,10), ceil(x), floor(x)">
           <button class="btn-icon fx-btn" title="Insert a variable or reference another line" onmousedown="event.preventDefault()" onclick="openFormulaPicker(${i})">ƒx</button>
         </div>
       </td>
@@ -778,7 +778,7 @@ function renderUnitDetail() {
       <!-- CALC SCRATCH -->
       <div class="card">
         <div class="card-title">🧮 Calculation Scratch Pad
-          <span style="color:var(--text-dim);font-weight:400;font-size:11px">· Define named variables, reference them in qty fields with =varname</span>
+          <span style="color:var(--text-dim);font-weight:400;font-size:11px">· Define named variables, reference them in qty fields with =varname · functions: round, roundup, rounddown, mround, ceil, floor</span>
         </div>
         <div class="calc-area">
           <textarea id="calc-scratch" placeholder="// Examples:
@@ -786,6 +786,11 @@ wall_sf = 2400
 wall_lf = 320
 cmu_per_sf = 1.125
 rebar_tons = wall_sf * 0.004
+
+// Rounding functions:
+cmu_blocks = roundup(wall_sf * cmu_per_sf)   // always round up
+bags = mround(wall_sf / 50, 1)               // nearest whole bag
+price = round(rebar_tons * 1850, 2)          // round to 2 decimals
 
 // Results appear below as you type" oninput="evalCalcScratch()" onfocus="setActiveFormula('scratch', this)">${calcScratch}</textarea>
           <div class="calc-output" id="calc-output"></div>
@@ -1302,6 +1307,41 @@ function saveOneOffItem() {
 }
 
 // ════════════════════════════════════════════════════════════
+// FORMULA FUNCTIONS  (available in the calc pad and qty formulas)
+// ════════════════════════════════════════════════════════════
+// Each helper is exposed by name (and an UPPERCASE alias) inside every
+// formula evaluation. Rounding helpers take an optional decimal-places arg.
+const FORMULA_FNS = {};
+(function () {
+  const base = {
+    round:     (x, d = 0) => { const f = Math.pow(10, d || 0); return Math.round((Number(x) + Number.EPSILON) * f) / f; },
+    roundup:   (x, d = 0) => { const f = Math.pow(10, d || 0); return Math.ceil(Number(x) * f - 1e-9) / f; },
+    rounddown: (x, d = 0) => { const f = Math.pow(10, d || 0); return Math.floor(Number(x) * f + 1e-9) / f; },
+    mround:    (x, m) => (m ? Math.round(Number(x) / m) * m : Number(x)),   // nearest multiple of m
+    ceil:  (x) => Math.ceil(Number(x)),
+    floor: (x) => Math.floor(Number(x)),
+    abs:   (x) => Math.abs(Number(x)),
+    sqrt:  (x) => Math.sqrt(Number(x)),
+    pow:   (x, p) => Math.pow(Number(x), Number(p)),
+    min:   (...a) => Math.min(...a.map(Number)),
+    max:   (...a) => Math.max(...a.map(Number)),
+  };
+  Object.keys(base).forEach(k => { FORMULA_FNS[k] = base[k]; FORMULA_FNS[k.toUpperCase()] = base[k]; });
+})();
+const FORMULA_FN_NAMES = Object.keys(FORMULA_FNS);
+
+// True if a token is one of our formula functions (so it is NOT treated as a
+// variable to substitute).
+function isFormulaFn(name) { return FORMULA_FNS.hasOwnProperty(name); }
+
+// Evaluate an expression whose variable names have already been substituted
+// for their numeric values. The math helpers are injected as locals by name.
+function evalExpression(replaced) {
+  const fn = new Function(...FORMULA_FN_NAMES, '"use strict"; return (' + replaced + ');');
+  return fn(...FORMULA_FN_NAMES.map(n => FORMULA_FNS[n]));
+}
+
+// ════════════════════════════════════════════════════════════
 // CALC SCRATCH PAD
 // ════════════════════════════════════════════════════════════
 function evalCalcScratch() {
@@ -1319,11 +1359,12 @@ function evalCalcScratch() {
     if (match) {
       const varName = match[1];
       const expr = match[2].replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, v => {
+        if (isFormulaFn(v)) return v;                      // keep round(), ceil(), etc.
         if (state.calcVars.hasOwnProperty(v)) return state.calcVars[v];
         return v;
       });
       try {
-        const val = Function('"use strict"; return (' + expr + ')')();
+        const val = evalExpression(expr);
         state.calcVars[varName] = val;
         html += `<span class="calc-var" title="Click to insert into the formula you're editing" onmousedown="event.preventDefault();insertFormulaRef('${varName}')">${varName} = ${typeof val === 'number' ? val.toLocaleString(undefined, {maximumFractionDigits:4}) : val}</span>`;
       } catch(e) {
@@ -1355,9 +1396,9 @@ function formatQty(n) {
 // Evaluate an expression (no leading '='), resolving any known variable names.
 function evalFormula(expr) {
   const replaced = String(expr).replace(/[a-zA-Z_][a-zA-Z0-9_]*/g, v =>
-    state.formulaVars.hasOwnProperty(v) ? state.formulaVars[v] : v);
+    isFormulaFn(v) ? v : (state.formulaVars.hasOwnProperty(v) ? state.formulaVars[v] : v));
   try {
-    const val = Function('"use strict"; return (' + replaced + ')')();
+    const val = evalExpression(replaced);
     return (typeof val === 'number' && isFinite(val)) ? val : null;
   } catch (e) { return null; }
 }
@@ -1570,9 +1611,53 @@ function openFormulaPicker(i) {
   }
   if (!any) html += `<div class="fp-empty">No other lines with a material/description yet.</div>`;
 
+  html += `<div class="fp-section">Functions</div>`;
+  FORMULA_PICKER_FNS.forEach(f => {
+    html += `<div class="fp-opt" title="${f.desc}" onmousedown="event.preventDefault();insertFormulaFn(${i}, ${JSON.stringify(f.snippet)})">
+      <span class="fp-tok">${f.label}</span><span class="fp-val">${f.desc}</span></div>`;
+  });
+
   dd.innerHTML = html;
   cell.appendChild(dd);
   setTimeout(() => document.addEventListener('mousedown', formulaPickerOutside, true), 0);
+}
+
+// Catalog shown in the ƒx picker's Functions section. `snippet` uses a "|"
+// to mark where the caret should land after insertion.
+const FORMULA_PICKER_FNS = [
+  { label: 'round',     snippet: 'round(|, 2)',     desc: 'Round to N decimals — round(x, 2)' },
+  { label: 'roundup',   snippet: 'roundup(|)',      desc: 'Always round up — roundup(x, [decimals])' },
+  { label: 'rounddown', snippet: 'rounddown(|)',    desc: 'Always round down — rounddown(x, [decimals])' },
+  { label: 'mround',    snippet: 'mround(|, 10)',   desc: 'Round to nearest multiple — mround(x, 10)' },
+  { label: 'ceil',      snippet: 'ceil(|)',         desc: 'Round up to whole number' },
+  { label: 'floor',     snippet: 'floor(|)',        desc: 'Round down to whole number' },
+  { label: 'min',       snippet: 'min(|)',          desc: 'Smallest of values — min(a, b, …)' },
+  { label: 'max',       snippet: 'max(|)',          desc: 'Largest of values — max(a, b, …)' },
+];
+
+// Insert a function snippet, placing the caret where the "|" marker was.
+function insertFormulaFn(i, snippet) {
+  const el = document.getElementById(`ml-qtyf-${i}`);
+  if (!el) return;
+  let cur = (el.dataset.formula && el.dataset.formula.length) ? el.dataset.formula : el.value;
+  cur = (cur || '').trim();
+  if (!cur.startsWith('=')) {
+    const num = (cur && !isNaN(parseFloat(cur))) ? cur : '';
+    cur = '=' + num;
+  }
+  let body = cur.slice(1).trim();
+  if (body.length && /[\w)\]]$/.test(body)) body += ' * ';   // chain with a sensible operator
+  const caret = snippet.indexOf('|');
+  const text = snippet.replace('|', '');
+  body += text;
+  el.dataset.formula = '';
+  el.classList.remove('has-formula');
+  el.value = '=' + body;
+  closeFormulaPicker();
+  el.focus();
+  // Place caret inside the parentheses (account for the leading '=' and prefix)
+  const pos = el.value.length - (text.length - (caret < 0 ? text.length : caret));
+  if (el.setSelectionRange) el.setSelectionRange(pos, pos);
 }
 
 function formulaPickerOutside(e) {
