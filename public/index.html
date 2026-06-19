@@ -209,6 +209,8 @@
   .fp-opt:hover { background: var(--row-hover); }
   .fp-opt .fp-val { font-family: var(--mono); color: var(--green); font-size: 11px; white-space: nowrap; }
   .fp-opt .fp-tok { font-family: var(--mono); color: var(--accent); font-size: 11px; }
+  .formula-picker .fp-search { padding: 8px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 28px; z-index: 1; }
+  .formula-picker .fp-search input { width: 100%; background: var(--input-bg); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: 4px; font-size: 12px; }
   .fp-empty { padding: 10px; color: var(--text-dim); font-size: 11px; }
   /* Sticky header of the ƒx picker with the "pop out to builder" button */
   .fp-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
@@ -1705,46 +1707,15 @@ function openFormulaPicker(i) {
   dd.className = 'formula-picker';
   dd.id = 'formula-picker';
 
-  let html = `<div class="fp-head"><span>Insert into formula</span>
-    <button class="fp-popout" title="Open the full formula builder with a calculator" onmousedown="event.preventDefault();openFormulaBuilder(${i})">⤢ Pop out</button></div>`;
-  html += `<div class="fp-section">Calc Pad Variables</div>`;
-  const calcKeys = Object.keys(state.calcVars || {});
-  if (calcKeys.length) {
-    calcKeys.forEach(k => {
-      const val = state.calcVars[k];
-      const shown = typeof val === 'number' ? val.toLocaleString(undefined, { maximumFractionDigits: 4 }) : val;
-      html += `<div class="fp-opt" onmousedown="event.preventDefault();insertFormulaToken(${i}, ${jsAttr(k)})">
-        <span class="fp-tok">${k}</span><span class="fp-val">${shown}</span></div>`;
-    });
-  } else {
-    html += `<div class="fp-empty">No variables yet — define them in the Calc Scratch Pad above.</div>`;
-  }
+  dd.innerHTML = `<div class="fp-head"><span>Insert into formula</span>
+    <button class="fp-popout" title="Open the full formula builder with a calculator" onmousedown="event.preventDefault();openFormulaBuilder(${i})">⤢ Pop out</button></div>
+    <div class="fp-search"><input id="fp-search" placeholder="Search variables, lines, functions…" oninput="renderFormulaPickerOptions(${i}, this.value)"></div>
+    <div id="fp-options"></div>`;
 
-  html += `<div class="fp-section">Other Lines (uses their quantity)</div>`;
-  const n = countMatRows();
-  let any = false;
-  for (let j = 0; j < n; j++) {
-    if (j === i) continue;
-    const lbl = (document.getElementById(`mp-label-${j}`)?.innerText || '').replace(/✕/g, '').trim();
-    if (!lbl || lbl.toLowerCase().startsWith('click to select')) continue;
-    any = true;
-    const unitName = document.getElementById(`ml-unit-${j}`)?.value || '';
-    const q = state.formulaVars ? state.formulaVars['line' + (j + 1)] : undefined;
-    html += `<div class="fp-opt" onmousedown="event.preventDefault();insertFormulaToken(${i}, 'line${j + 1}')">
-      <span><span class="fp-tok">line${j + 1}</span> · ${lbl}${unitName ? ' (' + unitName + ')' : ''}</span>
-      <span class="fp-val">${q !== undefined ? formatQty(q) : ''}</span></div>`;
-  }
-  if (!any) html += `<div class="fp-empty">No other lines with a material/description yet.</div>`;
-
-  html += `<div class="fp-section">Functions</div>`;
-  FORMULA_PICKER_FNS.forEach(f => {
-    html += `<div class="fp-opt" title="${f.desc}" onmousedown="event.preventDefault();insertFormulaFn(${i}, ${jsAttr(f.snippet)})">
-      <span class="fp-tok">${f.label}</span><span class="fp-val">${f.desc}</span></div>`;
-  });
-
-  dd.innerHTML = html;
   cell.appendChild(dd);
+  renderFormulaPickerOptions(i, '');
   positionFixedDropdown(cell, dd);
+  setTimeout(() => { const s = document.getElementById('fp-search'); if (s) s.focus(); }, 50);
   setTimeout(() => document.addEventListener('mousedown', formulaPickerOutside, true), 0);
 
   // Keep the fixed-position picker anchored to its cell while scrolling/resizing.
@@ -1760,6 +1731,69 @@ function openFormulaPicker(i) {
   };
   window.addEventListener('scroll', reposition, true);
   window.addEventListener('resize', reposition);
+}
+
+// Render (and filter) the ƒx picker's options: calc-pad variables, other
+// lines, and functions. Sections with no matches are hidden while searching.
+function renderFormulaPickerOptions(i, filter) {
+  const el = document.getElementById('fp-options');
+  if (!el) return;
+  const f = (filter || '').trim().toLowerCase();
+  const match = (...parts) => !f || parts.some(p => String(p ?? '').toLowerCase().includes(f));
+  let html = '';
+
+  // ── Calc Pad Variables ──
+  const allCalc = Object.keys(state.calcVars || {});
+  const calcKeys = allCalc.filter(k => match(k));
+  if (calcKeys.length) {
+    html += `<div class="fp-section">Calc Pad Variables</div>`;
+    calcKeys.forEach(k => {
+      const val = state.calcVars[k];
+      const shown = typeof val === 'number' ? val.toLocaleString(undefined, { maximumFractionDigits: 4 }) : val;
+      html += `<div class="fp-opt" onmousedown="event.preventDefault();insertFormulaToken(${i}, ${jsAttr(k)})">
+        <span class="fp-tok">${k}</span><span class="fp-val">${shown}</span></div>`;
+    });
+  } else if (!f && !allCalc.length) {
+    html += `<div class="fp-section">Calc Pad Variables</div><div class="fp-empty">No variables yet — define them in the Calc Scratch Pad above.</div>`;
+  }
+
+  // ── Other Lines ──
+  const n = countMatRows();
+  let lineRows = '';
+  for (let j = 0; j < n; j++) {
+    if (j === i) continue;
+    const lbl = (document.getElementById(`mp-label-${j}`)?.innerText || '').replace(/✕/g, '').trim();
+    if (!lbl || lbl.toLowerCase().startsWith('click to select')) continue;
+    const tok = 'line' + (j + 1);
+    if (!match(tok, lbl)) continue;
+    const unitName = document.getElementById(`ml-unit-${j}`)?.value || '';
+    const q = state.formulaVars ? state.formulaVars[tok] : undefined;
+    lineRows += `<div class="fp-opt" onmousedown="event.preventDefault();insertFormulaToken(${i}, '${tok}')">
+      <span><span class="fp-tok">${tok}</span> · ${lbl}${unitName ? ' (' + unitName + ')' : ''}</span>
+      <span class="fp-val">${q !== undefined ? formatQty(q) : ''}</span></div>`;
+  }
+  if (lineRows) {
+    html += `<div class="fp-section">Other Lines (uses their quantity)</div>` + lineRows;
+  } else if (!f) {
+    html += `<div class="fp-section">Other Lines (uses their quantity)</div><div class="fp-empty">No other lines with a material/description yet.</div>`;
+  }
+
+  // ── Functions ──
+  const fns = FORMULA_PICKER_FNS.filter(fn => match(fn.label, fn.desc));
+  if (fns.length) {
+    html += `<div class="fp-section">Functions</div>`;
+    fns.forEach(fn => {
+      html += `<div class="fp-opt" title="${fn.desc}" onmousedown="event.preventDefault();insertFormulaFn(${i}, ${jsAttr(fn.snippet)})">
+        <span class="fp-tok">${fn.label}</span><span class="fp-val">${fn.desc}</span></div>`;
+    });
+  }
+
+  el.innerHTML = html || `<div class="fp-empty">No matches.</div>`;
+
+  // Height changed — re-anchor so it doesn't overflow the viewport.
+  const dd = document.getElementById('formula-picker');
+  const cell = document.getElementById(`qty-cell-${i}`);
+  if (dd && cell) positionFixedDropdown(cell, dd);
 }
 
 // Catalog shown in the ƒx picker's Functions section. `snippet` uses a "|"
@@ -1900,7 +1934,7 @@ function openFormulaBuilder(i) {
     if (!lbl || lbl.toLowerCase().startsWith('click to select')) continue;
     any = true;
     const q = state.formulaVars ? state.formulaVars['line' + (j + 1)] : undefined;
-    lineChips += `<button class="fb-chip" title="${lbl}" onclick="fbInsert('line${j + 1}')">line${j + 1}<span class="fb-chip-val">${q !== undefined ? formatQty(q) : ''}</span></button>`;
+    lineChips += `<button class="fb-chip" title="line${j + 1}" onclick="fbInsert('line${j + 1}')">${lbl}<span class="fb-chip-val">${q !== undefined ? formatQty(q) : ''}</span></button>`;
   }
   lines += any ? `<div class="fb-chips">${lineChips}</div>` : `<div class="fb-empty">No other lines with a material yet.</div>`;
 
