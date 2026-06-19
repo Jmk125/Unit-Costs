@@ -108,6 +108,10 @@
   .btn-sm { padding: 4px 9px; font-size: 11px; }
   .btn-icon { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 3px 6px; border-radius: 4px; font-size: 14px; transition: all 0.1s; }
   .btn-icon:hover { color: var(--text); background: var(--surface3); }
+  .delete-bar { margin-top: 16px; display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+  .delete-hint { font-size: 11px; color: var(--text-dim); margin-right: auto; }
+  .del-check-cell { text-align: center; width: 28px; }
+  .del-check-cell input { cursor: pointer; width: 14px; height: 14px; accent-color: var(--red); }
   .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; }
 
   /* ── CARDS ── */
@@ -261,6 +265,7 @@ let state = {
   calcVars: {},
   formulaVars: {},
   refreshedOrders: new Set(),
+  deleteMode: false,
 };
 
 const UNITS = ['SF','SY','LF','EA','CY','CW','CF','Ton','Roll','Box','CTN','LB','LS','SQ','MBF'];
@@ -698,7 +703,9 @@ function renderUnitDetail() {
   mlines.forEach((line, i) => {
     const stalePriceClass = line.material_id && line.current_price !== null && line.price_snapshot !== line.current_price ? 'price-stale' : '';
     const refreshed = state.refreshedOrders.has(line.line_order || (i + 1));
+    const matEmpty = isMatLineEmpty(line);
     matRows += `<tr class="${refreshed ? 'row-refreshed' : ''}">
+      ${state.deleteMode ? `<td class="del-check-cell">${matEmpty ? '' : `<input type="checkbox" class="del-check" data-type="mat" data-idx="${i}" onchange="onDeleteCheckChange()">`}</td>` : ''}
       <td class="row-num">${i+1}</td>
       <td class="mat-picker" id="mp-cell-${i}">
         <div style="display:flex;align-items:center;gap:4px">
@@ -727,7 +734,9 @@ function renderUnitDetail() {
   const llines = u.labor_lines || [];
   while (llines.length < 8) llines.push({ line_order: llines.length + 1 });
   llines.forEach((line, i) => {
+    const labEmpty = isLabLineEmpty(line);
     labRows += `<tr>
+      ${state.deleteMode ? `<td class="del-check-cell">${labEmpty ? '' : `<input type="checkbox" class="del-check" data-type="lab" data-idx="${i}" onchange="onDeleteCheckChange()">`}</td>` : ''}
       <td class="row-num">${i+1}</td>
       <td><input type="text" id="ll-type-${i}" value="${line.labor_type||''}" placeholder="Labor or equipment" style="min-width:160px"></td>
       <td><input type="number" id="ll-crew-${i}" step="1" value="${line.crew_size||''}" style="width:60px;text-align:center" oninput="recalcLabLine(${i})"></td>
@@ -785,6 +794,7 @@ rebar_tons = wall_sf * 0.004
         <div class="card-title" style="padding:12px 12px 0;margin-bottom:0">🧱 Materials / Components</div>
         <table class="data-table">
           <thead><tr>
+            ${state.deleteMode ? '<th style="width:28px"></th>' : ''}
             <th style="width:28px">#</th>
             <th style="min-width:220px">Material / Component</th>
             <th>Unit</th>
@@ -796,7 +806,7 @@ rebar_tons = wall_sf * 0.004
           <tbody id="mat-tbody">${matRows}</tbody>
           <tfoot>
             <tr class="total-row">
-              <td colspan="6" style="text-align:right;padding-right:12px;color:var(--text-muted)">Material Total</td>
+              <td colspan="${state.deleteMode ? 7 : 6}" style="text-align:right;padding-right:12px;color:var(--text-muted)">Material Total</td>
               <td class="ext-cell" id="mat-total">$0.00</td>
             </tr>
           </tfoot>
@@ -808,6 +818,7 @@ rebar_tons = wall_sf * 0.004
         <div class="card-title" style="padding:12px 12px 0;margin-bottom:0">⚙️ Labor / Equipment</div>
         <table class="data-table">
           <thead><tr>
+            ${state.deleteMode ? '<th style="width:28px"></th>' : ''}
             <th style="width:28px">#</th>
             <th style="min-width:200px">Labor / Equipment Type</th>
             <th style="text-align:center">Crew #</th>
@@ -819,11 +830,17 @@ rebar_tons = wall_sf * 0.004
           <tbody id="lab-tbody">${labRows}</tbody>
           <tfoot>
             <tr class="total-row">
-              <td colspan="6" style="text-align:right;padding-right:12px;color:var(--text-muted)">Labor / Equipment Total</td>
+              <td colspan="${state.deleteMode ? 7 : 6}" style="text-align:right;padding-right:12px;color:var(--text-muted)">Labor / Equipment Total</td>
               <td class="ext-cell" id="lab-total">$0.00</td>
             </tr>
           </tfoot>
         </table>
+      </div>
+
+      <!-- DELETE ITEM BAR -->
+      <div class="delete-bar" id="delete-bar">
+        ${state.deleteMode ? '<span class="delete-hint">Check the material or labor items to remove, then confirm. Click again with nothing checked to cancel.</span>' : ''}
+        <button class="btn btn-secondary btn-sm" id="delete-action-btn" onclick="onDeleteActionClick()">🗑 Delete Item</button>
       </div>
     </div>
 
@@ -897,7 +914,138 @@ rebar_tons = wall_sf * 0.004
     evalCalcScratch();
     recalcAllMatLines();
     recalcAllLabLines();
+    if (state.deleteMode) onDeleteCheckChange();
   }, 50);
+}
+
+// ════════════════════════════════════════════════════════════
+// DELETE ITEMS (checkbox mode)
+// ════════════════════════════════════════════════════════════
+function isMatLineEmpty(line) {
+  if (!line) return true;
+  const hasName = !!((line.description || line.master_name || '').trim());
+  const hasPrice = line.price_per_unit !== null && line.price_per_unit !== undefined && line.price_per_unit !== '' && parseFloat(line.price_per_unit) !== 0;
+  const hasQty = !!((line.quantity_formula || '').toString().trim()) || (line.quantity !== null && line.quantity !== undefined && parseFloat(line.quantity) !== 0);
+  return !(hasName || hasPrice || hasQty);
+}
+
+function isLabLineEmpty(line) {
+  if (!line) return true;
+  const hasType = !!((line.labor_type || '').trim());
+  const hasNums = ['crew_size','hours','labor_rate'].some(k => line[k] !== null && line[k] !== undefined && line[k] !== '' && parseFloat(line[k]) !== 0);
+  return !(hasType || hasNums);
+}
+
+// Read the current on-screen line data back into state.activeUnit so a
+// re-render (entering/leaving delete mode) keeps any unsaved edits.
+function captureUnitFromDOM() {
+  const u = state.activeUnit;
+  if (!u) return;
+
+  const matLines = [];
+  for (let i = 0; document.getElementById(`ml-price-${i}`); i++) {
+    const rawF = getLineRawFormula(i);
+    matLines.push({
+      line_order: matLines.length + 1,
+      material_id: document.getElementById(`ml-matid-${i}`)?.textContent || null,
+      description: document.getElementById(`mp-label-${i}`)?.innerText?.replace(/✕/g,'')?.trim() || null,
+      purchase_unit: document.getElementById(`ml-unit-${i}`)?.value || null,
+      price_per_unit: parseFloat(document.getElementById(`ml-price-${i}`)?.value) || 0,
+      price_snapshot: parseFloat(document.getElementById(`ml-snap-${i}`)?.textContent) || null,
+      multiplier: parseFloat(document.getElementById(`ml-mltp-${i}`)?.value) || 1,
+      quantity_formula: rawF || null,
+      quantity: evalQtyRaw(rawF),
+    });
+  }
+  // Normalize the "Click to select..." placeholder back to empty
+  matLines.forEach(l => { if (l.description && l.description.toLowerCase().startsWith('click to select')) l.description = null; });
+
+  const labLines = [];
+  for (let i = 0; document.getElementById(`ll-crew-${i}`); i++) {
+    const crew = parseFloat(document.getElementById(`ll-crew-${i}`)?.value) || 0;
+    const hrs = parseFloat(document.getElementById(`ll-hrs-${i}`)?.value) || 0;
+    labLines.push({
+      line_order: labLines.length + 1,
+      labor_type: document.getElementById(`ll-type-${i}`)?.value || null,
+      crew_size: crew,
+      hours: hrs,
+      hours_total: crew * hrs,
+      labor_rate: parseFloat(document.getElementById(`ll-rate-${i}`)?.value) || 0,
+    });
+  }
+
+  u.material_lines = matLines;
+  u.labor_lines = labLines;
+  u.calc_scratch = document.getElementById('calc-scratch')?.value ?? u.calc_scratch;
+  u.misc_bond_pct = parseFloat(document.getElementById('sum-bond-pct')?.value) || 0;
+  u.escalation_pct = parseFloat(document.getElementById('sum-esc-pct')?.value) || 0;
+  u.markup_pct = parseFloat(document.getElementById('sum-mkp-pct')?.value) || 0;
+  u.output_quantity = document.getElementById('sum-outqty')?.value?.trim() || null;
+}
+
+// The single button at the bottom: enters delete mode, or confirms a deletion.
+function onDeleteActionClick() {
+  if (!state.deleteMode) {
+    captureUnitFromDOM();
+    state.deleteMode = true;
+    renderUnitDetail();
+    return;
+  }
+  const checked = document.querySelectorAll('.del-check:checked');
+  if (checked.length === 0) {
+    // Nothing selected — clicking acts as a toggle-off
+    cancelDeleteMode();
+    return;
+  }
+  performDelete();
+}
+
+function cancelDeleteMode() {
+  captureUnitFromDOM();
+  state.deleteMode = false;
+  renderUnitDetail();
+}
+
+// Update the bottom button label/style as checkboxes change.
+function onDeleteCheckChange() {
+  const btn = document.getElementById('delete-action-btn');
+  if (!btn) return;
+  const n = document.querySelectorAll('.del-check:checked').length;
+  if (n > 0) {
+    btn.textContent = `✓ Confirm Delete (${n})`;
+    btn.classList.remove('btn-secondary');
+    btn.classList.add('btn-danger');
+  } else {
+    btn.textContent = '🗑 Delete Item';
+    btn.classList.remove('btn-danger');
+    btn.classList.add('btn-secondary');
+  }
+}
+
+// Remove the checked rows, shifting everything below upward.
+function performDelete() {
+  captureUnitFromDOM();
+  const u = state.activeUnit;
+
+  const matDel = new Set();
+  const labDel = new Set();
+  document.querySelectorAll('.del-check:checked').forEach(cb => {
+    const idx = parseInt(cb.dataset.idx, 10);
+    if (cb.dataset.type === 'mat') matDel.add(idx); else labDel.add(idx);
+  });
+
+  u.material_lines = (u.material_lines || [])
+    .filter((_, i) => !matDel.has(i))
+    .map((l, i) => ({ ...l, line_order: i + 1 }));
+  u.labor_lines = (u.labor_lines || [])
+    .filter((_, i) => !labDel.has(i))
+    .map((l, i) => ({ ...l, line_order: i + 1 }));
+
+  // Line references in formulas (line1, line2, ...) shift when rows are
+  // removed — clearing the highlight set avoids stale "updated" tags.
+  state.refreshedOrders = new Set();
+  state.deleteMode = false;
+  renderUnitDetail();
 }
 
 // ════════════════════════════════════════════════════════════
