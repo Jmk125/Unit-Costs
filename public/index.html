@@ -203,7 +203,7 @@
   .data-table input.has-formula { color: var(--accent); font-weight: 600; cursor: pointer; }
   .fx-btn { font-size: 10px; color: var(--text-muted); padding: 2px 5px; border-radius: 3px; line-height: 1; flex-shrink: 0; }
   .fx-btn:hover { color: var(--accent); background: var(--surface3); }
-  .formula-picker { position: absolute; top: 100%; left: 0; width: 300px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; z-index: 60; max-height: 300px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+  .formula-picker { position: fixed; width: 300px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; z-index: 1000; max-height: 300px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
   .formula-picker .fp-section { padding: 6px 10px; font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; background: var(--surface2); }
   .fp-opt { padding: 7px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 8px; align-items: center; }
   .fp-opt:hover { background: var(--row-hover); }
@@ -1151,7 +1151,7 @@ function openMatPicker(rowIdx) {
     </div>`;
   cell.appendChild(dropdown);
   renderMatOptions('');
-  positionMatPicker(cell, dropdown);
+  positionFixedDropdown(cell, dropdown);
   setTimeout(() => document.getElementById('mat-search').focus(), 50);
   document.addEventListener('click', closeMatPicker, { once: true, capture: true });
 
@@ -1165,15 +1165,16 @@ function openMatPicker(rowIdx) {
       window.removeEventListener('resize', reposition);
       return;
     }
-    positionMatPicker(c, dd);
+    positionFixedDropdown(c, dd);
   };
   window.addEventListener('scroll', reposition, true);
   window.addEventListener('resize', reposition);
 }
 
 // The dropdown is position:fixed so it isn't clipped by the table's overflow.
-// Anchor it to the cell and flip it above when there isn't room below.
-function positionMatPicker(cell, dropdown) {
+// Anchor a fixed-position dropdown to a cell and flip it above when there
+// isn't room below; keep it within the viewport horizontally.
+function positionFixedDropdown(cell, dropdown) {
   const rect = cell.getBoundingClientRect();
   const margin = 6;
   const ddHeight = dropdown.offsetHeight || 260;
@@ -1634,6 +1635,11 @@ function setActiveFormula(kind, el, row) {
   document.body.classList.toggle('qty-formula-active', kind === 'qty');
 }
 
+// JSON-encode a value for safe inlining inside a double-quoted HTML handler
+// attribute. JSON.stringify yields double quotes, which would otherwise
+// prematurely terminate the attribute (e.g. onclick="fbKey("7")").
+function jsAttr(value) { return JSON.stringify(value).replace(/"/g, '&quot;'); }
+
 function insertTextAtCursor(el, text) {
   const start = (el.selectionStart != null) ? el.selectionStart : el.value.length;
   const end = (el.selectionEnd != null) ? el.selectionEnd : el.value.length;
@@ -1707,7 +1713,7 @@ function openFormulaPicker(i) {
     calcKeys.forEach(k => {
       const val = state.calcVars[k];
       const shown = typeof val === 'number' ? val.toLocaleString(undefined, { maximumFractionDigits: 4 }) : val;
-      html += `<div class="fp-opt" onmousedown="event.preventDefault();insertFormulaToken(${i}, ${JSON.stringify(k)})">
+      html += `<div class="fp-opt" onmousedown="event.preventDefault();insertFormulaToken(${i}, ${jsAttr(k)})">
         <span class="fp-tok">${k}</span><span class="fp-val">${shown}</span></div>`;
     });
   } else {
@@ -1732,13 +1738,28 @@ function openFormulaPicker(i) {
 
   html += `<div class="fp-section">Functions</div>`;
   FORMULA_PICKER_FNS.forEach(f => {
-    html += `<div class="fp-opt" title="${f.desc}" onmousedown="event.preventDefault();insertFormulaFn(${i}, ${JSON.stringify(f.snippet)})">
+    html += `<div class="fp-opt" title="${f.desc}" onmousedown="event.preventDefault();insertFormulaFn(${i}, ${jsAttr(f.snippet)})">
       <span class="fp-tok">${f.label}</span><span class="fp-val">${f.desc}</span></div>`;
   });
 
   dd.innerHTML = html;
   cell.appendChild(dd);
+  positionFixedDropdown(cell, dd);
   setTimeout(() => document.addEventListener('mousedown', formulaPickerOutside, true), 0);
+
+  // Keep the fixed-position picker anchored to its cell while scrolling/resizing.
+  const reposition = () => {
+    const open = document.getElementById('formula-picker');
+    const c = document.getElementById(`qty-cell-${i}`);
+    if (!open || !c) {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+      return;
+    }
+    positionFixedDropdown(c, open);
+  };
+  window.addEventListener('scroll', reposition, true);
+  window.addEventListener('resize', reposition);
 }
 
 // Catalog shown in the ƒx picker's Functions section. `snippet` uses a "|"
@@ -1846,13 +1867,13 @@ function openFormulaBuilder(i) {
 
   let keys = '';
   FB_KEYS.forEach(k => {
-    const arg = k.act ? `null, '${k.act}'` : JSON.stringify(k.ins || k.t);
+    const arg = k.act ? `null, '${k.act}'` : jsAttr(k.ins || k.t);
     keys += `<button class="fb-key ${k.cls || ''}" onclick="fbKey(${arg})">${k.t}</button>`;
   });
 
   let fns = `<div class="fp-section">Functions</div><div class="fb-chips">`;
   FORMULA_PICKER_FNS.forEach(f => {
-    fns += `<button class="fb-chip" title="${f.desc}" onclick="fbInsertFn(${JSON.stringify(f.snippet)})">${f.label}</button>`;
+    fns += `<button class="fb-chip" title="${f.desc}" onclick="fbInsertFn(${jsAttr(f.snippet)})">${f.label}</button>`;
   });
   fns += `</div>`;
 
@@ -1863,7 +1884,7 @@ function openFormulaBuilder(i) {
     calcKeys.forEach(k => {
       const val = state.calcVars[k];
       const shown = typeof val === 'number' ? val.toLocaleString(undefined, { maximumFractionDigits: 4 }) : val;
-      vars += `<button class="fb-chip" onclick="fbInsert(${JSON.stringify(k)})">${k}<span class="fb-chip-val">${shown}</span></button>`;
+      vars += `<button class="fb-chip" onclick="fbInsert(${jsAttr(k)})">${k}<span class="fb-chip-val">${shown}</span></button>`;
     });
     vars += `</div>`;
   } else {
