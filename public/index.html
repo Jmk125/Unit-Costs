@@ -182,6 +182,8 @@
   /* ── MISC ── */
   .div-tag { font-size: 11px; color: var(--text-dim); }
   .price-stale { color: var(--amber); }
+  .mat-stale-flag { cursor: pointer; font-size: 11px; line-height: 1; user-select: none; flex-shrink: 0; }
+  .mat-stale-flag:hover { opacity: 0.7; }
   .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
   .empty-state .big { font-size: 36px; margin-bottom: 8px; }
   hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
@@ -296,6 +298,45 @@ let state = {
   deleteMode: false,
   activeFormula: null,
 };
+
+// ── "Needs update" reminders on unit-cost material lines ──
+// A material whose master price hasn't been updated in over a year (same
+// threshold as the picker's ⚠️) gets a reminder flag on the line. The user can
+// dismiss it; dismissals persist in localStorage. Keyed by material id + its
+// last-updated date so a future price update surfaces a fresh reminder rather
+// than being silenced forever.
+const STALE_DISMISS_KEY = 'staleMatDismissals';
+function loadStaleDismissals() {
+  try { return new Set(JSON.parse(localStorage.getItem(STALE_DISMISS_KEY) || '[]')); }
+  catch (e) { return new Set(); }
+}
+let staleDismissals = loadStaleDismissals();
+function saveStaleDismissals() {
+  localStorage.setItem(STALE_DISMISS_KEY, JSON.stringify([...staleDismissals]));
+}
+function staleDismissKey(mat) { return `${mat.id}|${mat.date_updated || ''}`; }
+
+// Reminder flag HTML for a linked master material that's gone stale (>1 year).
+function matLineStaleFlag(materialId) {
+  if (!materialId) return '';
+  const mat = state.materials.find(m => m.id === materialId);
+  if (!mat || !mat.date_updated) return '';
+  const dt = new Date(mat.date_updated);
+  if (isNaN(dt.getTime())) return '';
+  const days = Math.floor((Date.now() - dt.getTime()) / 86400000);
+  if (days <= 365) return '';
+  if (staleDismissals.has(staleDismissKey(mat))) return '';
+  const ago = `${(days / 365).toFixed(1)}y`;
+  return `<span class="mat-stale-flag" data-mat="${mat.id}" title="This material's master price hasn't been updated in ${ago} — consider updating it. Click to dismiss this reminder." onclick="dismissMatLineStale(event, ${mat.id})">⚠️</span>`;
+}
+
+function dismissMatLineStale(e, matId) {
+  e.stopPropagation();
+  const mat = state.materials.find(m => m.id === matId);
+  if (mat) { staleDismissals.add(staleDismissKey(mat)); saveStaleDismissals(); }
+  // Remove every instance of this material's flag (it may sit on multiple lines).
+  document.querySelectorAll(`.mat-stale-flag[data-mat="${matId}"]`).forEach(f => f.remove());
+}
 
 const UNITS = ['SF','SY','LF','EA','CY','CW','CF','Ton','Roll','Box','CTN','LB','LS','SQ','MBF'];
 
@@ -744,6 +785,7 @@ function renderUnitDetail() {
       <td class="mat-picker" id="mp-cell-${i}">
         <div style="display:flex;align-items:center;gap:4px">
           <span id="mp-label-${i}" class="mp-label ${(line.description || line.master_name) ? 'set' : ''}" title="Click to select a material — or, while typing a formula, click to insert this line into it" onmousedown="onMatLabelMouseDown(event, ${i})" onclick="matLabelClick(${i})">${line.description || line.master_name || 'Click to select...'}</span>
+          ${matLineStaleFlag(line.material_id)}
           ${refreshed ? '<span class="refreshed-tag" title="Price updated from master — save to keep">updated</span>' : ''}
           ${(line.description || line.master_name) ? `<button class="btn-icon mat-clear-btn" style="font-size:10px" onclick="clearMatLine(${i})">✕</button>` : ''}
         </div>
@@ -1161,6 +1203,10 @@ function applyLineMaterial(i, { name, unit, price, materialId = null, snapshot =
   if (!label) return;
   label.textContent = name;
   label.classList.add('set');
+  // Refresh the "needs update" reminder for the newly chosen material.
+  label.parentElement.querySelectorAll('.mat-stale-flag').forEach(f => f.remove());
+  const flagHtml = matLineStaleFlag(materialId);
+  if (flagHtml) label.insertAdjacentHTML('afterend', flagHtml);
   document.getElementById(`ml-unit-${i}`).value = unit || '';
   document.getElementById(`ml-price-${i}`).value = (price === null || price === undefined || price === '') ? '' : price;
   document.getElementById(`ml-matid-${i}`).textContent = materialId || '';
@@ -1196,6 +1242,8 @@ function clearMatLine(i) {
   label.classList.remove('set');
   const btn = label.parentElement.querySelector('.mat-clear-btn');
   if (btn) btn.remove();
+  const flag = label.parentElement.querySelector('.mat-stale-flag');
+  if (flag) flag.remove();
   document.getElementById(`ml-unit-${i}`).value = '';
   document.getElementById(`ml-price-${i}`).value = '';
   document.getElementById(`ml-matid-${i}`).textContent = '';
