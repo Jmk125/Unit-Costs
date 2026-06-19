@@ -208,6 +208,32 @@
   .fp-opt .fp-val { font-family: var(--mono); color: var(--green); font-size: 11px; white-space: nowrap; }
   .fp-opt .fp-tok { font-family: var(--mono); color: var(--accent); font-size: 11px; }
   .fp-empty { padding: 10px; color: var(--text-dim); font-size: 11px; }
+  /* Sticky header of the ƒx picker with the "pop out to builder" button */
+  .fp-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; }
+  .fp-popout { font-size: 11px; color: var(--accent); background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 4px; padding: 3px 8px; cursor: pointer; text-transform: none; letter-spacing: 0; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+  .fp-popout:hover { background: var(--accent); color: #fff; }
+
+  /* ── FORMULA BUILDER (pop-out calculator window) ── */
+  .fb-input { width: 100%; font-family: var(--mono); font-size: 18px; padding: 12px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--accent); font-weight: 600; }
+  .fb-input:focus { outline: none; border-color: var(--accent); }
+  .fb-preview { font-family: var(--mono); font-size: 13px; color: var(--text-muted); margin: 8px 2px 14px; min-height: 18px; }
+  .fb-preview b { color: var(--green); font-size: 16px; }
+  .fb-preview.err b { color: var(--red); }
+  .fb-cols { display: flex; gap: 16px; align-items: flex-start; }
+  .fb-keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; flex: 0 0 240px; }
+  .fb-key { padding: 13px 0; font-family: var(--mono); font-size: 16px; background: var(--surface3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; transition: all 0.1s; text-align: center; }
+  .fb-key:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .fb-key.op { color: var(--accent); font-weight: 700; }
+  .fb-key.util { background: var(--surface2); color: var(--text-muted); font-size: 13px; }
+  .fb-key.util:hover { background: var(--red-dim); color: var(--red); border-color: var(--red); }
+  .fb-side { flex: 1; min-width: 0; }
+  .fb-side .fp-section { padding: 5px 8px; font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; background: var(--surface2); border-radius: 4px; margin-bottom: 6px; }
+  .fb-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .fb-chip { font-family: var(--mono); font-size: 11px; padding: 5px 9px; background: var(--surface3); border: 1px solid var(--border); border-radius: 14px; color: var(--accent); cursor: pointer; transition: all 0.1s; }
+  .fb-chip:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .fb-chip .fb-chip-val { color: var(--green); margin-left: 4px; }
+  .fb-chip:hover .fb-chip-val { color: #cfe; }
+  .fb-empty { color: var(--text-dim); font-size: 11px; margin-bottom: 12px; }
 
   /* ── MATERIAL LINE LABEL ── */
   .mp-label { flex: 1; font-size: 12px; cursor: pointer; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1587,7 +1613,9 @@ function openFormulaPicker(i) {
   dd.className = 'formula-picker';
   dd.id = 'formula-picker';
 
-  let html = `<div class="fp-section">Calc Pad Variables</div>`;
+  let html = `<div class="fp-head"><span>Insert into formula</span>
+    <button class="fp-popout" title="Open the full formula builder with a calculator" onmousedown="event.preventDefault();openFormulaBuilder(${i})">⤢ Pop out</button></div>`;
+  html += `<div class="fp-section">Calc Pad Variables</div>`;
   const calcKeys = Object.keys(state.calcVars || {});
   if (calcKeys.length) {
     calcKeys.forEach(k => {
@@ -1640,29 +1668,49 @@ const FORMULA_PICKER_FNS = [
   { label: 'max',       snippet: 'max(|)',          desc: 'Largest of values — max(a, b, …)' },
 ];
 
-// Insert a function snippet, placing the caret where the "|" marker was.
-function insertFormulaFn(i, snippet) {
+// Prepare a qty field for editing: reveal the raw formula text, ensure it is a
+// real "=formula", give it focus and return it ready for an at-cursor insert.
+// Returns null if the field can't be found.
+function prepFormulaField(i) {
   const el = document.getElementById(`ml-qtyf-${i}`);
-  if (!el) return;
-  let cur = (el.dataset.formula && el.dataset.formula.length) ? el.dataset.formula : el.value;
-  cur = (cur || '').trim();
-  if (!cur.startsWith('=')) {
-    const num = (cur && !isNaN(parseFloat(cur))) ? cur : '';
-    cur = '=' + num;
+  if (!el) return null;
+  const focused = document.activeElement === el;
+  if (!focused) {
+    // Field is showing the computed number — switch to the raw formula and put
+    // the caret at the end so the insert lands somewhere sensible.
+    if (el.dataset.formula && el.dataset.formula.length) el.value = el.dataset.formula;
+    el.classList.remove('has-formula');
+    el.focus();
+    const len = el.value.length;
+    if (el.setSelectionRange) el.setSelectionRange(len, len);
   }
-  let body = cur.slice(1).trim();
-  if (body.length && /[\w)\]]$/.test(body)) body += ' * ';   // chain with a sensible operator
-  const caret = snippet.indexOf('|');
-  const text = snippet.replace('|', '');
-  body += text;
+  // Promote a plain number / empty cell to a formula so the token makes sense.
+  if (!el.value.trim().startsWith('=')) {
+    const t = el.value.trim();
+    const num = (t && !isNaN(parseFloat(t))) ? t : '';
+    el.value = '=' + num;
+    const len = el.value.length;
+    if (el.setSelectionRange) el.setSelectionRange(len, len);
+  }
   el.dataset.formula = '';
   el.classList.remove('has-formula');
-  el.value = '=' + body;
+  return el;
+}
+
+// Insert a function snippet at the cursor, placing the caret where the "|"
+// marker was (typically between the parentheses).
+function insertFormulaFn(i, snippet) {
   closeFormulaPicker();
-  el.focus();
-  // Place caret inside the parentheses (account for the leading '=' and prefix)
-  const pos = el.value.length - (text.length - (caret < 0 ? text.length : caret));
-  if (el.setSelectionRange) el.setSelectionRange(pos, pos);
+  const el = prepFormulaField(i);
+  if (!el) return;
+  const caret = snippet.indexOf('|');
+  const text = snippet.replace('|', '');
+  const start = (el.selectionStart != null) ? el.selectionStart : el.value.length;
+  insertTextAtCursor(el, text);
+  if (caret >= 0 && el.setSelectionRange) {
+    const pos = start + caret;
+    el.setSelectionRange(pos, pos);
+  }
 }
 
 function formulaPickerOutside(e) {
@@ -1676,25 +1724,166 @@ function closeFormulaPicker() {
   document.removeEventListener('mousedown', formulaPickerOutside, true);
 }
 
+// Insert a calc-var name or "lineN" reference at the cursor.
 function insertFormulaToken(i, token) {
-  const el = document.getElementById(`ml-qtyf-${i}`);
+  closeFormulaPicker();
+  const el = prepFormulaField(i);
   if (!el) return;
-  let cur = (el.dataset.formula && el.dataset.formula.length) ? el.dataset.formula : el.value;
-  cur = (cur || '').trim();
-  if (!cur.startsWith('=')) {
-    const num = (cur && !isNaN(parseFloat(cur))) ? cur : '';
-    cur = '=' + num;
+  insertTextAtCursor(el, token);
+}
+
+// ════════════════════════════════════════════════════════════
+// FORMULA BUILDER  (pop-out window with a calculator keypad)
+// ════════════════════════════════════════════════════════════
+let fbRow = null;   // material line index the builder is currently editing
+
+// The calculator keypad. `fn` snippets use "|" to mark the caret landing spot.
+const FB_KEYS = [
+  { t: '7' }, { t: '8' }, { t: '9' }, { t: '/', cls: 'op' },
+  { t: '4' }, { t: '5' }, { t: '6' }, { t: '*', cls: 'op' },
+  { t: '1' }, { t: '2' }, { t: '3' }, { t: '-', cls: 'op' },
+  { t: '0' }, { t: '.' }, { t: '(' }, { t: '+', cls: 'op' },
+  { t: ')' }, { t: '⌫', cls: 'util', act: 'back' }, { t: 'C', cls: 'util', act: 'clear' }, { t: '%', cls: 'op', ins: '/100' },
+];
+
+function openFormulaBuilder(i) {
+  closeFormulaPicker();
+  fbRow = i;
+  rebuildFormulaVars();
+
+  const el = document.getElementById(`ml-qtyf-${i}`);
+  let raw = el ? ((el.dataset.formula && el.dataset.formula.length) ? el.dataset.formula : el.value) : '';
+  raw = (raw || '').trim();
+  const expr = raw.startsWith('=') ? raw.slice(1).trim() : raw;
+
+  const lineLabel = (document.getElementById(`mp-label-${i}`)?.innerText || '').replace(/✕/g, '').trim();
+
+  let keys = '';
+  FB_KEYS.forEach(k => {
+    const arg = k.act ? `null, '${k.act}'` : JSON.stringify(k.ins || k.t);
+    keys += `<button class="fb-key ${k.cls || ''}" onclick="fbKey(${arg})">${k.t}</button>`;
+  });
+
+  let fns = `<div class="fp-section">Functions</div><div class="fb-chips">`;
+  FORMULA_PICKER_FNS.forEach(f => {
+    fns += `<button class="fb-chip" title="${f.desc}" onclick="fbInsertFn(${JSON.stringify(f.snippet)})">${f.label}</button>`;
+  });
+  fns += `</div>`;
+
+  let vars = `<div class="fp-section">Calc Pad Variables</div>`;
+  const calcKeys = Object.keys(state.calcVars || {});
+  if (calcKeys.length) {
+    vars += `<div class="fb-chips">`;
+    calcKeys.forEach(k => {
+      const val = state.calcVars[k];
+      const shown = typeof val === 'number' ? val.toLocaleString(undefined, { maximumFractionDigits: 4 }) : val;
+      vars += `<button class="fb-chip" onclick="fbInsert(${JSON.stringify(k)})">${k}<span class="fb-chip-val">${shown}</span></button>`;
+    });
+    vars += `</div>`;
+  } else {
+    vars += `<div class="fb-empty">None yet — define them in the Calc Scratch Pad.</div>`;
   }
-  let body = cur.slice(1).trim();
-  if (body.length && /[\w)\]]$/.test(body)) body += ' * ';   // chain with a sensible operator
-  body += token;
+
+  let lines = `<div class="fp-section">Other Lines</div>`;
+  const n = countMatRows();
+  let any = false, lineChips = '';
+  for (let j = 0; j < n; j++) {
+    if (j === i) continue;
+    const lbl = (document.getElementById(`mp-label-${j}`)?.innerText || '').replace(/✕/g, '').trim();
+    if (!lbl || lbl.toLowerCase().startsWith('click to select')) continue;
+    any = true;
+    const q = state.formulaVars ? state.formulaVars['line' + (j + 1)] : undefined;
+    lineChips += `<button class="fb-chip" title="${lbl}" onclick="fbInsert('line${j + 1}')">line${j + 1}<span class="fb-chip-val">${q !== undefined ? formatQty(q) : ''}</span></button>`;
+  }
+  lines += any ? `<div class="fb-chips">${lineChips}</div>` : `<div class="fb-empty">No other lines with a material yet.</div>`;
+
+  document.getElementById('modal-box').style.width = '640px';
+  showModal(`<div class="modal-title">Formula Builder${lineLabel ? ' — ' + lineLabel : ' — Line ' + (i + 1)}</div>
+    <input type="text" id="fb-input" class="fb-input" value="${expr.replace(/"/g, '&quot;')}" oninput="fbPreview()" placeholder="Type a formula, e.g. line1 * 1.05">
+    <div id="fb-prev" class="fb-preview"></div>
+    <div class="fb-cols">
+      <div class="fb-keys">${keys}</div>
+      <div class="fb-side">${fns}${vars}${lines}</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeFormulaBuilder()">Cancel</button>
+      <button class="btn btn-primary" onclick="applyFormulaBuilder()">Apply to Line</button>
+    </div>`);
+
+  const input = document.getElementById('fb-input');
+  input.focus();
+  if (input.setSelectionRange) input.setSelectionRange(input.value.length, input.value.length);
+  fbPreview();
+}
+
+// Insert plain text at the cursor of the builder input.
+function fbInsert(text) {
+  const el = document.getElementById('fb-input');
+  if (!el) return;
+  insertTextAtCursor(el, text);
+  fbPreview();
+}
+
+// Insert a function snippet, dropping the caret on the "|" marker.
+function fbInsertFn(snippet) {
+  const el = document.getElementById('fb-input');
+  if (!el) return;
+  const caret = snippet.indexOf('|');
+  const text = snippet.replace('|', '');
+  const start = (el.selectionStart != null) ? el.selectionStart : el.value.length;
+  insertTextAtCursor(el, text);
+  if (caret >= 0 && el.setSelectionRange) el.setSelectionRange(start + caret, start + caret);
+  fbPreview();
+}
+
+// Calculator key: either inserts text or runs a util action (clear / backspace).
+function fbKey(text, act) {
+  const el = document.getElementById('fb-input');
+  if (!el) return;
+  if (act === 'clear') { el.value = ''; el.focus(); fbPreview(); return; }
+  if (act === 'back') {
+    const s = (el.selectionStart != null) ? el.selectionStart : el.value.length;
+    const e = (el.selectionEnd != null) ? el.selectionEnd : el.value.length;
+    if (s !== e) { el.value = el.value.slice(0, s) + el.value.slice(e); el.setSelectionRange(s, s); }
+    else if (s > 0) { el.value = el.value.slice(0, s - 1) + el.value.slice(s); el.setSelectionRange(s - 1, s - 1); }
+    el.focus(); fbPreview(); return;
+  }
+  fbInsert(text);
+}
+
+// Live-evaluate the builder expression and show the result.
+function fbPreview() {
+  const el = document.getElementById('fb-input');
+  const out = document.getElementById('fb-prev');
+  if (!el || !out) return;
+  const expr = el.value.trim().replace(/^=/, '').trim();
+  if (!expr) { out.className = 'fb-preview'; out.innerHTML = '<span style="color:var(--text-dim)">Result appears here…</span>'; return; }
+  const v = evalFormula(expr);
+  if (v === null) { out.className = 'fb-preview err'; out.innerHTML = '= <b>error</b> — check the formula'; }
+  else { out.className = 'fb-preview'; out.innerHTML = '= <b>' + formatQty(v) + '</b>'; }
+}
+
+function closeFormulaBuilder() {
+  document.getElementById('modal-box').style.width = '';
+  closeModal();
+  fbRow = null;
+}
+
+// Write the built formula back into the line's qty field.
+function applyFormulaBuilder() {
+  const i = fbRow;
+  const el = document.getElementById(`ml-qtyf-${i}`);
+  if (!el) { closeFormulaBuilder(); return; }
+  let expr = (document.getElementById('fb-input').value || '').trim().replace(/^=/, '').trim();
+  let raw;
+  if (!expr) raw = '';
+  else if (/^[\d.]+$/.test(expr)) raw = expr;   // a bare number stays a plain qty
+  else raw = '=' + expr;
+  el.value = raw;
   el.dataset.formula = '';
   el.classList.remove('has-formula');
-  el.value = '=' + body;
-  closeFormulaPicker();
-  el.focus();
-  const len = el.value.length;
-  if (el.setSelectionRange) el.setSelectionRange(len, len);
+  closeFormulaBuilder();
+  recalcAllMatLines();
 }
 
 function recalcLabLine(i) {
@@ -2040,6 +2229,8 @@ function showModal(html) {
 }
 function closeModal() {
   document.getElementById('modal-overlay').style.display = 'none';
+  document.getElementById('modal-box').style.width = '';   // reset any per-modal width override
+  fbRow = null;
 }
 function closeModalOverlay(e) {
   if (e.target === document.getElementById('modal-overlay')) closeModal();
