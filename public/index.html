@@ -248,6 +248,10 @@
   .mat-picker-footer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
   .mat-picker-footer .btn { flex: 1; justify-content: center; }
   .mat-browser-list { max-height: 50vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-top: 8px; }
+  .mat-browser-list .mat-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .mat-browser-list .mat-opt-main { flex: 1; min-width: 0; }
+  .btn-update-mat { background: transparent; border: 1px solid var(--border); color: var(--text-muted); font-size: 11px; padding: 3px 9px; border-radius: 4px; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+  .btn-update-mat:hover { color: var(--accent); border-color: var(--accent); }
 
   /* ── REFRESHED-PRICE HIGHLIGHT (until saved) ── */
   .data-table tr.row-refreshed td { background: var(--green-dim); }
@@ -587,7 +591,7 @@ function showNewMaterialModal(prefill = {}) {
     </div>`);
 }
 
-async function showEditMaterialModal(id) {
+async function showEditMaterialModal(id, fromBrowser = false) {
   const mat = await api(`/api/materials/${id}`);
   const divOptions = state.divisions.map(d =>
     `<option value="${d.num}" ${mat.division == d.num ? 'selected' : ''}>${d.label}</option>`).join('');
@@ -611,9 +615,15 @@ async function showEditMaterialModal(id) {
       <select id="m-backup-link" multiple style="height:80px">${fileOptions}</select>
       <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Ctrl+click to select multiple</div></div>` : ''}
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="updateMaterial(${id})">Update Material</button>
+      <button class="btn btn-secondary" onclick="${fromBrowser ? 'showMatBrowser()' : 'closeModal()'}">${fromBrowser ? '← Back' : 'Cancel'}</button>
+      <button class="btn btn-primary" onclick="updateMaterial(${id}, ${fromBrowser})">Update Material</button>
     </div>`);
+}
+
+// Open the master-list edit modal for a material from the "Browse Full List"
+// picker, returning to the browser afterward instead of the materials tab.
+function editMaterialFromBrowser(id) {
+  showEditMaterialModal(id, true);
 }
 
 async function saveMaterial() {
@@ -634,7 +644,7 @@ async function saveMaterial() {
   renderSidebar();
 }
 
-async function updateMaterial(id) {
+async function updateMaterial(id, fromBrowser = false) {
   const body = {
     division: +document.getElementById('m-div').value,
     item_name: document.getElementById('m-name').value.trim(),
@@ -654,10 +664,16 @@ async function updateMaterial(id) {
       await api(`/api/materials/${id}/backup-links`, { method: 'POST', body: JSON.stringify({ backup_file_id: fid }) });
     }
   }
-  closeModal();
   await loadMaterials();
-  renderMaterialsView();
-  renderSidebar();
+  if (fromBrowser) {
+    // Came from the unit-cost material picker — return to the browser with the
+    // refreshed price rather than jumping to the materials tab.
+    showMatBrowser();
+  } else {
+    closeModal();
+    renderMaterialsView();
+    renderSidebar();
+  }
 }
 
 async function deleteMaterial(id) {
@@ -1420,8 +1436,11 @@ function renderMatBrowserList(filter) {
     html += `<div class="fp-section">${divLabel(div)}</div>`;
     grouped[div].forEach(m => {
       html += `<div class="mat-option" onclick="selectMatFromBrowser(${m.id})">
-        <div class="mat-opt-name">${m.item_name}</div>
-        <div class="mat-opt-meta"><span>${m.purchase_unit}</span><span style="color:var(--green)">$${parseFloat(m.cost_per_unit).toFixed(2)}</span>${matUpdatedMeta(m)}</div>
+        <div class="mat-opt-main">
+          <div class="mat-opt-name">${m.item_name}</div>
+          <div class="mat-opt-meta"><span>${m.purchase_unit}</span><span style="color:var(--green)">$${parseFloat(m.cost_per_unit).toFixed(2)}</span>${matUpdatedMeta(m)}</div>
+        </div>
+        <button class="btn-update-mat" title="Update this material's cost in the master list" onclick="event.stopPropagation();editMaterialFromBrowser(${m.id})">✎ Update</button>
       </div>`;
     });
   });
