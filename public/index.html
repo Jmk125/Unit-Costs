@@ -294,7 +294,7 @@ async function api(url, opts = {}) {
 // ════════════════════════════════════════════════════════════
 // TAB SWITCHING
 // ════════════════════════════════════════════════════════════
-function switchTab(tab) {
+async function switchTab(tab) {
   state.tab = tab;
   state.activeDivision = null;
   state.activeUnitId = null;
@@ -304,6 +304,11 @@ function switchTab(tab) {
     document.getElementById('view-' + t).style.display = t === tab ? 'block' : 'none';
   });
   document.getElementById('sidebar-search').value = '';
+  // Re-fetch on tab entry so freshness flags (e.g. the stale-price ⚠️ on units)
+  // reflect master-price edits made since the page first loaded.
+  if (tab === 'materials') await loadMaterials();
+  else if (tab === 'units') { await loadMaterials(); await loadUnitCosts(); }
+  else await loadBackupFiles();
   renderSidebar();
   if (tab === 'materials') renderMaterialsView();
   else if (tab === 'units') renderUnitsView();
