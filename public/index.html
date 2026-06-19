@@ -171,7 +171,7 @@
 
   /* ── MAT PICKER ── */
   .mat-picker { position: relative; }
-  .mat-picker-dropdown { position: absolute; top: 100%; left: 0; width: 340px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; z-index: 50; max-height: 260px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+  .mat-picker-dropdown { position: fixed; width: 340px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; z-index: 1000; max-height: 260px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
   .mat-picker-search { padding: 8px; border-bottom: 1px solid var(--border); }
   .mat-picker-search input { width: 100%; background: var(--input-bg); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: 4px; font-size: 12px; }
   .mat-option { padding: 7px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid var(--border); }
@@ -1151,8 +1151,46 @@ function openMatPicker(rowIdx) {
     </div>`;
   cell.appendChild(dropdown);
   renderMatOptions('');
+  positionMatPicker(cell, dropdown);
   setTimeout(() => document.getElementById('mat-search').focus(), 50);
   document.addEventListener('click', closeMatPicker, { once: true, capture: true });
+
+  // Keep the fixed-position dropdown anchored to its row while scrolling/resizing.
+  // Self-removes once the dropdown is gone.
+  const reposition = () => {
+    const dd = document.getElementById('mat-picker-dropdown');
+    const c = document.getElementById(`mp-cell-${rowIdx}`);
+    if (!dd || !c) {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+      return;
+    }
+    positionMatPicker(c, dd);
+  };
+  window.addEventListener('scroll', reposition, true);
+  window.addEventListener('resize', reposition);
+}
+
+// The dropdown is position:fixed so it isn't clipped by the table's overflow.
+// Anchor it to the cell and flip it above when there isn't room below.
+function positionMatPicker(cell, dropdown) {
+  const rect = cell.getBoundingClientRect();
+  const margin = 6;
+  const ddHeight = dropdown.offsetHeight || 260;
+  const ddWidth = dropdown.offsetWidth || 340;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  // Open upward if there's not enough room below but more room above.
+  if (spaceBelow < ddHeight + margin && rect.top > spaceBelow) {
+    dropdown.style.top = Math.max(margin, rect.top - ddHeight) + 'px';
+  } else {
+    dropdown.style.top = rect.bottom + 'px';
+  }
+  // Keep the dropdown within the viewport horizontally.
+  let left = rect.left;
+  if (left + ddWidth > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - ddWidth - margin);
+  }
+  dropdown.style.left = left + 'px';
 }
 
 function filterMatOptions(val) {
