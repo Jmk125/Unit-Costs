@@ -314,6 +314,7 @@ let state = {
   refreshedOrders: new Set(),
   deleteMode: false,
   activeFormula: null,
+  materialSearch: '',
 };
 
 // ── "Needs update" reminders on unit-cost material lines ──
@@ -519,6 +520,14 @@ async function renderMaterialsView() {
   const el = document.getElementById('view-materials');
   let mats = state.materials;
   if (state.activeDivision) mats = mats.filter(m => m.division == state.activeDivision);
+  const q = (state.materialSearch || '').trim().toLowerCase();
+  if (q) mats = mats.filter(m =>
+    m.item_name.toLowerCase().includes(q) ||
+    String(m.division).includes(q) ||
+    (m.purchase_unit || '').toLowerCase().includes(q) ||
+    (m.updated_by || '').toLowerCase().includes(q) ||
+    (m.comments || '').toLowerCase().includes(q)
+  );
 
   // Group by division
   const grouped = {};
@@ -535,9 +544,13 @@ async function renderMaterialsView() {
   let html = `<div class="panel-header">
     <div>
       <div class="panel-title">Materials Master List</div>
-      <div class="panel-sub">${mats.length} items${state.activeDivision ? ' · ' + divLabel(state.activeDivision) : ''}</div>
+      <div class="panel-sub">${mats.length} items${state.activeDivision ? ' · ' + divLabel(state.activeDivision) : ''}${q ? ' · matching "' + state.materialSearch.trim() + '"' : ''}</div>
     </div>
-    <div style="margin-left:auto;display:flex;gap:8px">
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+      <div style="position:relative;display:flex;align-items:center">
+        <input id="mat-search-master" value="${(state.materialSearch || '').replace(/"/g, '&quot;')}" placeholder="Search materials..." oninput="filterMaterials(this.value)" style="background:var(--input-bg);border:1px solid var(--border);color:var(--text);padding:7px 28px 7px 10px;border-radius:5px;font-size:13px;width:240px">
+        ${q ? `<button class="btn-icon" title="Clear search" onclick="filterMaterials('')" style="position:absolute;right:4px">✕</button>` : ''}
+      </div>
       <button class="btn btn-primary" onclick="showNewMaterialModal()">+ New Material</button>
     </div>
   </div>
@@ -549,6 +562,10 @@ async function renderMaterialsView() {
       <th style="min-width:140px">Comments</th><th>Actions</th>
     </tr></thead>
     <tbody>`;
+
+  if (!mats.length) {
+    html += `<tr><td colspan="8" style="text-align:center;padding:28px;color:var(--text-muted)">${q ? 'No materials match your search.' : 'No materials yet.'}</td></tr>`;
+  }
 
   Object.keys(grouped).sort((a,b)=>a-b).forEach(div => {
     html += `<tr><td colspan="8" style="background:var(--surface3);padding:5px 10px;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">${divLabel(div)}</td></tr>`;
@@ -572,6 +589,13 @@ async function renderMaterialsView() {
 
   html += `</tbody></table></div>`;
   el.innerHTML = html;
+}
+
+function filterMaterials(val) {
+  state.materialSearch = val;
+  renderMaterialsView();
+  const search = document.getElementById('mat-search-master');
+  if (search) { search.focus(); const len = search.value.length; search.setSelectionRange(len, len); }
 }
 
 // ════════════════════════════════════════════════════════════
