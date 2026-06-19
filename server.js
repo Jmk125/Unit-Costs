@@ -353,6 +353,29 @@ app.get('/api/unit-costs/:id/publications', async (req, res) => {
   ));
 });
 
+// Edit a publication entry (e.g. amend notes without re-publishing)
+app.put('/api/unit-costs/:id/publications/:pubId', async (req, res) => {
+  await getDb();
+  const { id, pubId } = req.params;
+  const existing = query('SELECT * FROM unit_cost_publications WHERE id = ? AND unit_cost_id = ?', [pubId, id]);
+  if (!existing.length) return res.status(404).json({ error: 'Not found' });
+  const { project_name, estimator, cost_per_unit, notes } = req.body;
+  run(
+    `UPDATE unit_cost_publications SET project_name=?, estimator=?, cost_per_unit=?, notes=? WHERE id=?`,
+    [project_name || null, estimator, cost_per_unit, notes || null, pubId]
+  );
+  res.json({ success: true });
+});
+
+// Delete a publication entry
+app.delete('/api/unit-costs/:id/publications/:pubId', async (req, res) => {
+  await getDb();
+  const { id, pubId } = req.params;
+  run('DELETE FROM unit_cost_publications WHERE id = ? AND unit_cost_id = ?', [pubId, id]);
+  res.json({ success: true });
+});
+
+
 // ─── DIVISIONS LIST ───────────────────────────────────────────────────────────
 
 app.get('/api/divisions', (req, res) => {

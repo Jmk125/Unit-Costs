@@ -2340,24 +2340,73 @@ async function publishUnit() {
   renderUnitDetail();
 }
 
-async function showPublicationHistory() {
+async function showPublicationHistory(editingPubId = null) {
   const pubs = await api(`/api/unit-costs/${state.activeUnitId}/publications`);
+  const out = state.activeUnit.output_unit;
   let html = `<div class="modal-title">Publication History — ${state.activeUnit.name}</div>`;
   if (!pubs.length) {
     html += `<div style="color:var(--text-muted);padding:20px 0;text-align:center">No publications yet</div>`;
   } else {
+    const esc = (s) => String(s ?? '').replace(/"/g, '&quot;');
     pubs.forEach(p => {
-      html += `<div class="pub-row">
-        <div class="pub-top">
-          <span>${p.project_name || 'No project'}</span>
-          <span class="pub-cost">$${parseFloat(p.cost_per_unit).toFixed(2)}/${state.activeUnit.output_unit}</span>
-        </div>
-        <div class="pub-meta">${p.estimator} · ${p.published_at ? p.published_at.split('T')[0] : ''} ${p.notes ? '· ' + p.notes : ''}</div>
-      </div>`;
+      const date = (p.published_at || '').slice(0, 10);
+      if (p.id === editingPubId) {
+        html += `<div class="pub-row pub-row-edit">
+          <div class="form-grid" style="margin-bottom:8px">
+            <div class="form-group" style="grid-column:1/-1"><label>Project Name</label><input id="pub-edit-project" value="${esc(p.project_name)}" placeholder="No project"></div>
+            <div class="form-group"><label>Estimator</label><input id="pub-edit-est" value="${esc(p.estimator)}"></div>
+            <div class="form-group"><label>$/Unit</label><input id="pub-edit-cost" type="number" step="0.01" value="${parseFloat(p.cost_per_unit)}"></div>
+            <div class="form-group" style="grid-column:1/-1"><label>Notes</label><textarea id="pub-edit-notes" placeholder="Notes...">${p.notes || ''}</textarea></div>
+          </div>
+          <div style="display:flex;gap:6px;justify-content:flex-end;align-items:center">
+            <span style="color:var(--text-muted);font-size:11px;margin-right:auto">Published ${date}</span>
+            <button class="btn btn-secondary btn-sm" onclick="showPublicationHistory()">Cancel</button>
+            <button class="btn btn-primary btn-sm" onclick="savePublicationEdit(${p.id})">Save</button>
+          </div>
+        </div>`;
+      } else {
+        html += `<div class="pub-row">
+          <div class="pub-top">
+            <span>${p.project_name || 'No project'}</span>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span class="pub-cost">$${parseFloat(p.cost_per_unit).toFixed(2)}/${out}</span>
+              <button class="btn-icon hist-act-btn" title="Edit this publication" onclick="showPublicationHistory(${p.id})">✎</button>
+              <button class="btn-icon hist-act-btn" title="Delete this publication" onclick="deletePublication(${p.id})">🗑️</button>
+            </span>
+          </div>
+          <div class="pub-meta">${p.estimator} · ${date} ${p.notes ? '· ' + p.notes : ''}</div>
+        </div>`;
+      }
     });
   }
   html += `<div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>`;
   showModal(html);
+}
+
+async function savePublicationEdit(pubId) {
+  const body = {
+    project_name: document.getElementById('pub-edit-project').value.trim(),
+    estimator: document.getElementById('pub-edit-est').value.trim(),
+    cost_per_unit: parseFloat(document.getElementById('pub-edit-cost').value),
+    notes: document.getElementById('pub-edit-notes').value.trim(),
+  };
+  if (!body.estimator || !body.cost_per_unit) return alert('Estimator and cost required.');
+  await api(`/api/unit-costs/${state.activeUnitId}/publications/${pubId}`, { method: 'PUT', body: JSON.stringify(body) });
+  state.activeUnit = await api(`/api/unit-costs/${state.activeUnitId}`);
+  await loadUnitCosts();
+  renderSidebar();
+  renderUnitDetail();
+  showPublicationHistory();
+}
+
+async function deletePublication(pubId) {
+  if (!confirm('Delete this publication entry? This cannot be undone.')) return;
+  await api(`/api/unit-costs/${state.activeUnitId}/publications/${pubId}`, { method: 'DELETE' });
+  state.activeUnit = await api(`/api/unit-costs/${state.activeUnitId}`);
+  await loadUnitCosts();
+  renderSidebar();
+  renderUnitDetail();
+  showPublicationHistory();
 }
 
 // ════════════════════════════════════════════════════════════
